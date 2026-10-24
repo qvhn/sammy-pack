@@ -1,0 +1,48 @@
+name: Bug report
+description: Something behaves differently from what the docs or schema say
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything security-related, use [SECURITY.md](../blob/main/SECURITY.md)
+        rather than a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: orchestration
+    attributes:
+      label: Orchestration JSON
+      description: Reduced to the smallest shape that still reproduces it, if you can.
+      render: json
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface
+      options:
+        - Web UI
+        - CLI (sammy-cli)
+        - Claude Code skill
+        - HTTP API / trigger ingress
+        - Standalone worker
+        - Queue-source adapter (Kafka / RabbitMQ / SQS)
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Run store
+      options: [SQLite (default), Postgres]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Run id, relevant log lines, or the trigger that provoked it
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit

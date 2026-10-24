@@ -1,0 +1,79 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "ci-flake-detector",
+  "description": "Subscribes to a `test.failed` event: re-runs the failing check up to 3× (exits early on PASS), then judge-flake decides flaky vs. real. Flakes are recorded and dropped; real regressions enter a bounded fix→verify loop supervised by judge-convergence (which STOPS on success OR oscillation), and anything still unresolved escalates to a ticket. Stops flaky reds from triggering needless repair, and real reds from being dismissed.",
+  "lifecycle": { "tags": ["reactive", "qa"] },
+  "triggers": [
+    { "kind": "events", "event": "test.failed" }
+  ],
+  "phases": [
+    {
+      "name": "rerun",
+      "description": "Re-run the failing check a few times to gather determinism evidence. Exits early if it passes.",
+      "loop": {
+        "body": {
+          "name": "rerun-check",
+          "agent": "agents/qa-runner.md",
+          "description": "Re-run the failing test/check and report PASS/FAIL with evidence."
+        },
+        "maxIterations": 3,
+        "until": "VERDICT: PASS"
+      },
+      "as": "rerunEvidence"
+    },
+    {
+      "name": "classify",
+      "description": "Flaky (non-deterministic) or a real regression, given the re-run evidence?",
+      "route": {
+        "router": "agents/judge-flake.md",
+        "branches": {
+          "flaky": {
+            "name": "record-flake",
+            "agent": "agents/summarizer.md",
+            "description": "Record the flake (quarantine candidate). No code change."
+          },
+          "real": {
+            "name": "remediate",
+            "phases": [
+              {
+                "name": "fix-loop",
+                "description": "Bounded fix→verify loop; judge-convergence stops on success or on oscillation/stall.",
+                "loop": {
+                  "body": {
+                    "name": "fix-attempt",
+                    "phases": [
+                      {
+                        "name": "fix",
+                        "agent": "agents/dev.md",
+                        "description": "Implement a fix for the confirmed regression."
+                      },
+                      {
+                        "name": "verify",
+                        "agent": "agents/qa-runner.md",
+                        "description": "Re-run the check against the fix."
+                      }
+                    ]
+                  },
+                  "maxIterations": 3,
+                  "judge": "agents/judge-convergence.md"
+                },
+                "as": "fixResult"
+              },
+              {
+                "name": "escalate-ticket",
+                "agent": "agents/jira-adapter.md",
+                "tools": ["jira"],
+                "description": "File/annotate a ticket capturing the regression and the fix outcome (resolved or needs-human)."
+              }
+            ]
+          }
+        },
+        "default": {
+          "name": "human-classify",
+          "agent": "agents/pm.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

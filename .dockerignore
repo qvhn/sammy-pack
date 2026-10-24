@@ -1,0 +1,57 @@
+# What never enters the Docker build context.
+#
+# NOTE: `agents/` and `examples/` are git ALLOWLIST directories — the working
+# tree may hold imported, untracked sets that git deliberately excludes but
+# .dockerignore cannot distinguish. Build images from a clean clone (or CI),
+# never from a working tree with imported content. See docs/DOCKER.md.
+
+# VCS / CI / editor / local tooling state
+.git
+.githooks
+.github
+.claude
+.idea
+.vscode
+.DS_Store
+.playwright-mcp
+coverage
+**/*.tsbuildinfo
+*.log
+
+# Dependencies & build outputs — rebuilt inside the image
+**/node_modules
+app/web-dist
+app/packages/*/dist
+
+# Local runtime state — never bake into an image
+runs.db
+runs.db-shm
+runs.db-wal
+runs/
+memory-store/
+budget.json
+.sammy-pack-run/
+
+# Secrets & per-machine registries (mcp/ may reference local paths/endpoints)
+credentials.json
+sammy-connections-*.json
+sammy-prefs-*.json
+sammy-settings-*.json
+.env
+.env.*
+mcp/
+hooks/
+
+# Mobile build trees — the container ships the web SPA only
+app/ios
+app/android
+scratch/
+
+# Working-tree scratch
+app/*.png
+docs/internal/
+
+# Docker files themselves (not needed inside the image)
+Dockerfile
+docker-compose.yml
+.dockerignore

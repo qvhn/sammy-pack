@@ -1,0 +1,90 @@
+{
+  "name": "sammy-pack-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "sammy-pack \u2014 declarative JSON agent orchestration with durable, resumable execution: visual editors, triggers, evals, A2A interop, CLI\u2194web parity.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qvhn/sammy-pack"
+  },
+  "keywords": [
+    "agents",
+    "orchestration",
+    "claude",
+    "durable-execution",
+    "a2a",
+    "llm",
+    "workflow",
+    "evals"
+  ],
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "start": "react-native start",
+    "web": "vite",
+    "worker": "tsx worker.ts",
+    "serve": "tsx serve.ts",
+    "cli": "tsx sammy-cli.ts",
+    "build:web": "vite build",
+    "preview:web": "vite preview",
+    "lint": "eslint .",
+    "test": "jest",
+    "test:integration": "TEST_KAFKA_BROKERS=127.0.0.1:19092 TEST_AMQP_URL=amqp://127.0.0.1:5673 TEST_SQS_ENDPOINT=http://127.0.0.1:9324 jest --runInBand integration-queue-sources",
+    "test:postgres": "TEST_DATABASE_URL=postgres://sammy:sammy@127.0.0.1:5434/sammy_test jest --runInBand postgres-store lifecycle-postgres pg-concurrent-init",
+    "test:docker": "TEST_DOCKER_PG_URL=postgres://sammy:sammy@host.docker.internal:5434/sammy_test jest --runInBand docker-smoke",
+    "typecheck": "tsc --noEmit",
+    "ci": "npm run typecheck && npm test -- --ci && npm run build:web",
+    "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.143",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
+    "@xyflow/react": "^12.10.2",
+    "better-sqlite3": "^12.10.0",
+    "connect": "^3.7.0",
+    "node-cron": "^4.2.1",
+    "pako": "^2.1.0",
+    "pdfjs-dist": "^5.7.284",
+    "pg": "^8.21.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-web": "^0.21.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "20.1.0",
+    "@react-native-community/cli-platform-android": "20.1.0",
+    "@react-native-community/cli-platform-ios": "20.1.0",
+    "@react-native/babel-preset": "0.85.3",
+    "@react-native/eslint-config": "0.85.3",
+    "@react-native/jest-preset": "0.85.3",
+    "@react-native/metro-config": "0.85.3",
+    "@react-native/typescript-config": "0.85.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jest": "^29.5.13",
+    "@types/pako": "^2.0.4",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/react-test-renderer": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^8.19.0",
+    "jest": "^29.6.3",
+    "prettier": "2.8.8",
+    "react-test-renderer": "19.2.3",
+    "tsx": "^4.22.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.0.0"
+  },
+  "engines": {
+    "node": ">= 22.11.0"
+  }
+}

@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: lint + typecheck + test
+    runs-on: ubuntu-latest
+    # Hang guard: the suite runs in ~7s parallel / a few minutes in-band;
+    # without this a leaked handle in Jest's exit path burns the runner for
+    # GitHub's 6-hour default (it happened — runs 28567612278, 35814060803).
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      # Errors only. The warning count is large and historically tolerated;
+      # what this gates is the error class (unused bindings, and
+      # react-hooks/exhaustive-deps, which in this codebase has tracked real
+      # stale-closure bugs in the editors).
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test -- --ci
+      - name: Web build
+        run: npm run build:web
+
+  # The two suites that were previously SKIPPED in CI forever, because they
+  # self-skip without their env vars (`const suite = url ? describe :
+  # describe.skip`). They cover the Postgres store — the backend recommended
+  # for the multi-process topology — and the three broker adapters whose
+  # packages are published. Both are exactly where a defect is invisible
+  # until it runs: the two stores' SQL is written twice and diverges where
+  # reliability lives, and the adapters are the glue to real client libraries.
+  stores-and-brokers:
+    name: postgres + broker adapters
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      # The same committed compose file the contributing docs tell a human to
+      # use, rather than a parallel set of `services:` definitions that could
+      # drift from it. Redpanda also needs a `command:`, which GitHub service
+      # containers do not support.
+      - name: Start Postgres + Kafka + RabbitMQ + SQS
+        run: docker compose -f docker-compose.test.yml up -d --wait
+      - name: Postgres store contract + lifecycle on PG
+        run: npm run test:postgres
+        working-directory: app
+      - name: Queue-source adapters against real brokers
+        run: npm run test:integration
+        working-directory: app
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+  # The shipped image, black-box. Everything above mounts the API in-process;
+  # nothing above executes the Dockerfile — the runtime ENV, the pruned
+  # node_modules + re-added tsx, the /data seed, the HEALTHCHECK probe, or the
+  # server+worker Postgres topology. The build context is `git archive`, never
+  # the checkout, for the reason .dockerignore gives: `agents/` and `examples/`
+  # are allowlist directories and an image must only ever contain what git
+  # tracks.
+  image-smoke:
+    name: container smoke (SQLite + Postgres topologies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - name: Build the image from a clean archive
+        run: git archive --format=tar HEAD | docker build -t sammy-pack:ci -
+      - name: Start the throwaway Postgres
+        run: docker compose -f docker-compose.test.yml up -d --wait postgres
+      - name: Smoke the container over HTTP
+        run: npm run test:docker
+        working-directory: app
+        env:
+          TEST_DOCKER_IMAGE: sammy-pack:ci
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v

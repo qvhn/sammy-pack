@@ -1,0 +1,109 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "scenario-coverage-convergence",
+  "description": "Drive a declarative device-test corpus to an honest, converged verdict board \u2014 then grow it: converge the suite (repeated resume passes with environment guards), triage every residual into app-bug / drift / selector / environment / by-design, fan out authoring agents to convert operator-stub scenarios into runnable ones, re-converge with the enlarged corpus, and gate the final board + new coverage on human review. Built from a real campaign where one long fragile run produced 200+ junk verdicts that hid real regressions; the convergence-loop + triage split is the antidote.",
+  "lifecycle": {
+    "tags": [
+      "qa",
+      "coverage",
+      "devices",
+      "convergence"
+    ]
+  },
+  "vars": {
+    "corpusDir": "path to the declarative scenario corpus",
+    "schemaPath": "path to the corpus JSON schema",
+    "validateCmd": "command that validates the whole corpus (non-zero on invalid)",
+    "runCmd": "resume-capable suite invocation (keeps prior PASS verdicts cached)",
+    "countPassCmd": "prints the banked PASS count",
+    "healthChecks": "list of {name, cmd} liveness probes (app server, bundler, devices)",
+    "recycleCmd": "restarts UI drivers / cold-starts the app / re-boots devices",
+    "loginRestoreCmd": "optional: verify + restore device auth state",
+    "passCapMinutes": "wall-clock cap per pass (the driver-rot window)",
+    "maxPasses": "convergence pass ceiling, e.g. 5",
+    "manifestGlob": "per-test verdict artifacts (reason, screenshots, output tail)",
+    "appSrcDir": "application source root (selector verification + drift checks)",
+    "maxStubConversions": "cap on stub conversions per run, e.g. 12",
+    "evidencePageSpec": "where and how to publish the human-review evidence page: destination + layout + staging command. The page MUST show FULL coverage: one capture per scenario per platform for the entire corpus (final/goal screen for every PASS, failure screen for every FAIL, visually distinguished), grouped by surface/area with per-capture captions. Per-surface samples or text-only verdict bands are non-compliant \u2014 reviewers confirm design and flow flaws from the captures, so the round covers the whole app"
+  },
+  "state": {
+    "stubQueue": {
+      "reducer": "replace"
+    }
+  },
+  "phases": [
+    {
+      "name": "materialize-config",
+      "description": "vars are visible to code nodes, not to prompt interpolation \u2014 materialize the suite config into state so prompts can read ${cfg.*} (the established pattern).",
+      "as": "cfg",
+      "code": {
+        "source": "return JSON.stringify(vars);"
+      }
+    },
+    {
+      "name": "baseline-converge",
+      "agent": "agents/suite-converger.md",
+      "as": "baselineBoard",
+      "description": "Converge the suite as-is: repeated resume passes with environment guards until a pass banks nothing new. Produces the trustworthy baseline board.",
+      "prompt": "EXECUTE NOW \u2014 do not ask questions. Run your convergence loop exactly as your agent definition describes, using this concrete config: ${cfg}. Launch suite passes DETACHED and poll their logs every 2-3 minutes (short commands = visible progress). Stop when a pass banks no new PASS, then output the verdict board."
+    },
+    {
+      "name": "triage",
+      "agent": "agents/coverage-triager.md",
+      "as": "triage",
+      "timeout": 7200,
+      "stallTimeout": 1800,
+      "description": "Classify every residual non-PASS with artifact evidence: app-bug / test-drift / selector / environment / by-design. App bugs exit to the delivery pipeline; the rest feed coverage work. Evidence-heavy: screenshot hygiene (downscaled copies, small batches) makes this slower than default phase caps."
+    },
+    {
+      "name": "select-stubs",
+      "agent": "agents/scenario-stub-author.md",
+      "as": "stubQueue",
+      "prompt": "SELECTION MODE \u2014 do not convert anything yet. From the corpus at ${cfg.corpusDir}, list the operator-stub scenarios (placeholder machine steps, prose recipes in notes) whose prerequisites now exist: verify each recipe's selectors/fixtures against ${cfg.appSrcDir} and the triage report (${triage}). Output ONLY a JSON array of at most ${cfg.maxStubConversions} items, each {\"id\": scenario-id, \"file\": path, \"why\": one-line readiness evidence} \u2014 highest-confidence first. Stale buckets are normal: ids named as missing in old notes often exist by now; source is the only truth.",
+      "description": "Pick the convertible stubs \u2014 prerequisites verified in source, capped per run."
+    },
+    {
+      "name": "sanitize-stub-queue",
+      "description": "Balanced-bracket extraction of the first JSON array in the selector's output (agents wrap arrays in prose/fences; a greedy regex spans stray brackets).",
+      "as": "stubQueue",
+      "code": {
+        "source": "const s=String(input); const i=s.indexOf('['); if(i<0) return '[]'; let d=0, inStr=false, esc=false; for(let j=i;j<s.length;j++){const c=s[j]; if(esc){esc=false;continue;} if(c==='\\\\'){esc=true;continue;} if(c==='\"'){inStr=!inStr;continue;} if(inStr)continue; if(c==='[')d++; else if(c===']'){d--; if(d===0){const cand=s.slice(i,j+1); try{return JSON.stringify(JSON.parse(cand));}catch(e){return '[]';}}}} return '[]';"
+      }
+    },
+    {
+      "name": "convert-stubs",
+      "description": "Fan the authoring agents over the selected stubs. Serial-capped: corpus files are shared state and validators race.",
+      "map": {
+        "over": "${stubQueue}",
+        "concurrency": 2,
+        "body": {
+          "name": "author-stub",
+          "agent": "agents/scenario-stub-author.md",
+          "prompt": "Convert this one stub scenario to runnable steps: ${item}. Corpus schema: ${cfg.schemaPath}. Validate with ${cfg.validateCmd}. Verify every selector in ${cfg.appSrcDir} before authoring. Re-bucket only on a clean validate; otherwise append a dated one-line blocker to its notes and leave the bucket unchanged."
+        }
+      }
+    },
+    {
+      "name": "validate-corpus",
+      "agent": "agents/scenario-stub-author.md",
+      "prompt": "GATE MODE: run ${cfg.validateCmd} on the full corpus and report PASS/FAIL with the output tail. If invalid, identify which converted scenario broke it and fix ONLY that file, then re-validate. Output the final validate status.",
+      "description": "The corpus must validate as a whole before it is allowed near devices."
+    },
+    {
+      "name": "re-converge",
+      "agent": "agents/suite-converger.md",
+      "as": "finalBoard",
+      "description": "Converge again with the enlarged corpus \u2014 newly-converted scenarios earn real verdicts; regressions in conversions surface here, not in review.",
+      "prompt": "EXECUTE NOW \u2014 do not ask questions or list caveats. Run the convergence loop again with this concrete config: ${cfg} (resume mode keeps banked verdicts; the newly-converted scenarios get their first real verdicts). Detached passes + short polls. Output the final verdict board with per-pass deltas."
+    },
+    {
+      "name": "review-gate",
+      "lock": true,
+      "timeout": 7200,
+      "stallTimeout": 1800,
+      "agent": "agents/coverage-triager.md",
+      "prompt": "Prepare the human-review packet: final board ${finalBoard} vs baseline ${baselineBoard} (delta table), the conversions that went green vs those that failed their first run (with evidence), the remaining by-design blocked list with each gate's justification, and the ranked app-bug list from ${triage}. Be explicit about what is NOT covered and why. Then PUBLISH the packet per ${cfg.evidencePageSpec}: verdict bands PLUS per-surface goal screenshots for every platform tested, sourced from the run manifests' screenshot paths, each captioned surface + scenario id. A text-only evidence page violates the spec \u2014 humans review flaws in design and flow from the captures, not from counts.",
+      "description": "Human approval on the board delta + new coverage before anything ships downstream."
+    }
+  ]
+}

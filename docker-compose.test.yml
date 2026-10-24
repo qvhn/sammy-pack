@@ -1,0 +1,97 @@
+# Throwaway brokers for the queue-source INTEGRATION tests.
+#
+# The adapter unit tests drive each consume loop against a mock
+# (`KafkaConsumerLike` / `RabbitChannelLike` / `SqsLike`), which proves the
+# loop's ack/retry/poison semantics but never touches kafkajs, amqplib or
+# the AWS SDK. The glue between the real client library and those
+# interfaces — `kafkaConsumerAdapter`, `rabbitChannelAdapter`,
+# `sqsClientAdapter` — was therefore completely unverified, and it is
+# exactly where a library upgrade breaks you.
+#
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   cd app && npm run test:integration    # brokers
+#   cd app && npm run test:postgres       # the Postgres store contract
+#   docker compose -f docker-compose.test.yml down -v
+#
+# Nothing here is part of the shipped deployment (that's docker-compose.yml).
+# Ports are offset from the usual defaults so this never collides with a
+# broker someone is already running locally.
+services:
+  # Kafka API without ZooKeeper or a JVM — boots in ~2s.
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:19092
+      # Advertised back to the client as localhost: the test connects from
+      # the host, not from inside the compose network.
+      - --advertise-kafka-addr=PLAINTEXT://127.0.0.1:19092
+    ports:
+      - '19092:19092'
+    healthcheck:
+      test: ['CMD-SHELL', 'rpk cluster info -X brokers=127.0.0.1:19092 >/dev/null 2>&1']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  rabbitmq:
+    image: rabbitmq:3-alpine
+    ports:
+      - '5673:5672'
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # Throwaway Postgres for the PostgresRunStore contract suite. The SQLite
+  # backend is covered unconditionally by db.test.ts; this is the only way to
+  # execute the Postgres twin of every store method — including the ones whose
+  # SQL differs per backend (the FOR UPDATE SKIP LOCKED claim, the partial
+  # unique index, the ON CONFLICT group lock), which typecheck identically
+  # while being able to fail only here.
+  #
+  # Port 5434, offset past both the Postgres default (5432) and the dev
+  # `sammy-postgres` on 5433, so bringing this up can never disturb a
+  # database someone is already running locally. The suite creates and drops
+  # its own tables, so this database is disposable by design.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sammy
+      POSTGRES_PASSWORD: sammy
+      POSTGRES_DB: sammy_test
+    ports:
+      - '5434:5432'
+    # tmpfs: no volume, so `down -v` leaves nothing behind and each `up` is a
+    # genuinely fresh schema — which is what exercises init()/migrations.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sammy -d sammy_test']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # SQS-compatible, ~30MB, no AWS account. The test creates its own queue
+  # through the ordinary CreateQueue API.
+  elasticmq:
+    image: softwaremill/elasticmq-native:latest
+    ports:
+      - '9324:9324'
+    healthcheck:
+      test:
+        - 'CMD-SHELL'
+        - 'wget -qO- "http://127.0.0.1:9324/?Action=ListQueues" >/dev/null 2>&1 || exit 1'
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s

@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "release-readiness-classify",
+  "description": "Calibration harness orchestration: routes accumulated release-validation evidence through judge-release-readiness and emits the CHOSEN verdict as its output (each branch is a code node returning its own name). That makes the judge eval-able — an eval with an `exact` scorer measures how accurately it ships well-evidenced releases and holds releases with unresolved failures or evidence gaps. Pair with datasets/release-readiness-calibration.json + evals/release-readiness-calibration.json.",
+  "lifecycle": { "tags": ["judge", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-release-readiness.md",
+        "branches": {
+          "ship": { "name": "is-ship", "code": { "source": "return 'ship'" } },
+          "hold": { "name": "is-hold", "code": { "source": "return 'hold'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

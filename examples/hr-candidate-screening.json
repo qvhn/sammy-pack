@@ -1,0 +1,51 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "hr-candidate-screening",
+  "description": "Recruiting loop: a recruiter screens an application against the role's must-haves, a three-person panel reviews in parallel (technical / values / role-fit), a synthesizer writes the debrief, and the hiring manager makes the LOCKED hire call. Showcases `converge` for a review panel and a `lock` for the accountable hire/no-hire decision a human must own.",
+  "lifecycle": { "tags": ["business-ops"] },
+  "inputs": [
+    {
+      "name": "application",
+      "kind": "file",
+      "required": true,
+      "description": "The candidate application — resume / profile plus the role they applied for (upload or paste)."
+    }
+  ],
+  "phases": [
+    {
+      "name": "screen",
+      "agent": "agents/recruiter.md",
+      "as": "screen",
+      "prompt": "Run a first-pass screen of this application against the role's must-haves. Evidence-based; advance / reject / hold with a reason.\n\nAPPLICATION:\n${application}"
+    },
+    {
+      "name": "panel",
+      "description": "Three independent reads of the same candidate, run concurrently; summarizer writes the debrief.",
+      "converge": [
+        {
+          "name": "technical",
+          "agent": "agents/dev-lead.md",
+          "prompt": "Assess this candidate's TECHNICAL signal for the role — depth, judgment, evidence. Strengths and the gaps to probe.\n\nSCREEN:\n${screen}\n\nAPPLICATION:\n${application}"
+        },
+        {
+          "name": "values",
+          "agent": "agents/chief-of-staff.md",
+          "prompt": "Assess this candidate for VALUES / ways-of-working — collaboration, ownership, how they raise the team. Evidence over vibes.\n\nSCREEN:\n${screen}\n\nAPPLICATION:\n${application}"
+        },
+        {
+          "name": "role-fit",
+          "agent": "agents/pm.md",
+          "prompt": "Assess ROLE-FIT — does their experience map to what this role actually needs day to day? What would they ramp on?\n\nSCREEN:\n${screen}\n\nAPPLICATION:\n${application}"
+        }
+      ],
+      "merger": "agents/summarizer.md",
+      "as": "debrief"
+    },
+    {
+      "name": "decision",
+      "agent": "agents/hiring-manager.md",
+      "lock": true,
+      "prompt": "Make the accountable hire / no-hire / need-more-signal call. Weigh the panel (don't average it), address any dissent, and if hire propose a level.\n\nDEBRIEF:\n${debrief}\n\nRECRUITER SCREEN:\n${screen}"
+    }
+  ]
+}

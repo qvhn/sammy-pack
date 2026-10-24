@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "federated-loopback",
+  "description": "Two-workspace federation you can run on ONE server, zero tokens: the a2a phase calls this same workspace's smoke-test orchestration over real A2A (card fetch → JSON-RPC message/send → task polling → a durable run on the receiving side). Point ${peer} at another sammy-pack server to make it genuinely two-workspace. The idempotencyKey makes the dispatch safe to re-send after a crash — the receiver returns the existing task instead of starting a duplicate run.",
+  "lifecycle": { "tags": ["a2a", "starter"] },
+  "vars": { "peer": "http://localhost:5173" },
+  "phases": [
+    {
+      "name": "compose-brief",
+      "description": "Deterministic prep — shape the input the remote agent will receive.",
+      "code": { "source": "return 'federation brief: ' + (input || 'hello from the caller workspace')" }
+    },
+    {
+      "name": "remote-run",
+      "description": "Real A2A dispatch: fetches the peer's agent card, submits the brief as a task, polls to completion, folds the artifact in.",
+      "a2a": { "agentCard": "${peer}/api/a2a/smoke-test/agent-card.json" },
+      "idempotencyKey": "federated-loopback/${input}",
+      "timeout": 120,
+      "as": "remote"
+    },
+    {
+      "name": "wrap-up",
+      "description": "Local synthesis of the remote result.",
+      "code": { "source": "return 'remote workspace replied: ' + input" }
+    }
+  ]
+}

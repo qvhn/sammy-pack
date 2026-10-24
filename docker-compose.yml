@@ -1,0 +1,99 @@
+# sammy-pack — compose topologies.
+#
+# Default (`docker compose up`): single-node SQLite — just `server`, with its
+# in-process delivery worker draining the trigger queue and runs.db on the
+# named volume. SQLite claims are single-process by design, so no standalone
+# worker runs in this mode.
+#
+# Postgres (`--profile postgres`, or COMPOSE_PROFILES=postgres in .env):
+# adds `postgres` + `worker`. Point BOTH app services at it by exporting
+# DATABASE_URL (the worker defaults to the in-compose postgres). Typical .env:
+#
+#   COMPOSE_PROFILES=postgres
+#   DATABASE_URL=postgres://sammy:sammy@postgres:5432/sammy
+#   SAMMY_DISABLE_INPROCESS_WORKER=1     # dedicated workers own the queue
+#
+# Scale workers: docker compose --profile postgres up -d --scale worker=3
+# (scaling `server` needs distinct published ports / an LB — see docs/DOCKER.md)
+
+x-app-env: &app-env
+  # Postgres run store; empty → SQLite at /data/runs.db.
+  DATABASE_URL: ${DATABASE_URL:-}
+  # Bearer gate on mutating /api routes (recommended when the port is shared).
+  SAMMY_API_TOKEN: ${SAMMY_API_TOKEN:-}
+  # Agent execution auth (or ship a connection in /data/credentials.json).
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  # HMAC secret for signed trigger ingress (webhook/events/queue/deploy).
+  SAMMY_WEBHOOK_SECRET: ${SAMMY_WEBHOOK_SECRET:-}
+  # Opt-in run retention sweep (days); empty = keep runs forever.
+  SAMMY_RUN_RETENTION_DAYS: ${SAMMY_RUN_RETENTION_DAYS:-}
+  # 1 = resume interrupted runs from their last checkpoint on boot.
+  SAMMY_AUTO_RESUME: ${SAMMY_AUTO_RESUME:-}
+  # 1 = allow `code.run` shell phases (off by default; trusted workspaces only).
+  SAMMY_ALLOW_CODE_RUN: ${SAMMY_ALLOW_CODE_RUN:-}
+
+services:
+  server:
+    build: .
+    image: sammy-pack:latest
+    init: true # reap the agent child processes the SDK spawns
+    ports:
+      - "${SAMMY_PUBLISH_PORT:-5173}:5173"
+    environment:
+      <<: *app-env
+      # 1 = stop draining deliveries in-process (postgres topology: workers own it).
+      SAMMY_DISABLE_INPROCESS_WORKER: ${SAMMY_DISABLE_INPROCESS_WORKER:-}
+    volumes:
+      - sammy-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false # ignored when the postgres profile is inactive
+    restart: unless-stopped
+
+  # Standalone delivery worker — Postgres topology only (SQLite delivery claims
+  # are single-process; in the default topology the server drains in-process).
+  worker:
+    profiles: [postgres]
+    image: sammy-pack:latest
+    build: .
+    init: true
+    command: ["node", "--import", "tsx", "worker.ts"]
+    healthcheck:
+      disable: true # image healthcheck probes the http server; workers have none
+    environment:
+      <<: *app-env
+      DATABASE_URL: ${DATABASE_URL:-postgres://sammy:sammy@postgres:5432/sammy}
+      # Concurrent deliveries per worker (default 4).
+      SAMMY_WORKER_CONCURRENCY: ${SAMMY_WORKER_CONCURRENCY:-}
+      # Set to the server URL for delegate mode (server owns execution).
+      SAMMY_SERVER_URL: ${SAMMY_SERVER_URL:-}
+    volumes:
+      - sammy-data:/data # same workspace as the server (orchestrations/agents)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    profiles: [postgres]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sammy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sammy}
+      POSTGRES_DB: sammy
+    volumes:
+      - sammy-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sammy -d sammy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  # Workspace + state: orchestrations, agents, schema, datasets, evals,
+  # context, runs.db (SQLite mode), budget.json, credentials.json. Seeded from
+  # the image on first use; survives image upgrades (see docs/DOCKER.md).
+  sammy-data:
+  sammy-pg:

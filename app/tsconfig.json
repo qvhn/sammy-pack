@@ -1,0 +1,29 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "types": ["jest"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      // Resolve the published SDK package to its workspace SOURCE during
+      // local typecheck, so the app builds without first running the SDK's
+      // tsup build (its dist/ is gitignored). The engine re-exports the
+      // queue-source contract + client signer from `@sammy-pack/sdk`; this
+      // mapping lets tsc follow that import into packages/sdk/src.
+      "@sammy-pack/sdk": ["./packages/sdk/src/index.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": [
+    "**/node_modules",
+    "**/Pods",
+    // Broker-SDK adapter packages bring their own broker client + tsconfig
+    // and are typechecked standalone (see each package's tsconfig.json), so
+    // they're kept out of the app program — their broker SDK is never an
+    // app/core dependency. (@sammy-pack/sdk + queue-service are SDK-only and
+    // stay IN the app typecheck.)
+    "packages/source-sqs",
+    "packages/source-kafka",
+    "packages/source-rabbitmq"
+  ]
+}

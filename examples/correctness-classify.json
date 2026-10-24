@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "correctness-classify",
+  "description": "Calibration harness orchestration: routes an EXPECTED/OUTPUT pair through judge-correctness and emits the CHOSEN verdict as its output (each branch is a code node returning its own name). That makes the judge eval-able — an eval with an `exact` scorer measures the judge's verdict accuracy against labeled pairs. Pair with datasets/correctness-calibration.json + evals/correctness-calibration.json.",
+  "lifecycle": { "tags": ["judge", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-correctness.md",
+        "branches": {
+          "PASS": { "name": "is-pass", "code": { "source": "return 'PASS'" } },
+          "FAIL": { "name": "is-fail", "code": { "source": "return 'FAIL'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

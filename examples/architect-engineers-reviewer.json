@@ -1,0 +1,45 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "architect-engineers-reviewer",
+  "description": "U-shape: one architect plans, parallel engineers implement separate tracks against that plan, a reviewer reads the merged output and judges cohesion. Use when a problem decomposes into independent parts that share a single design but need cross-checking at the end. The plan is `as`-bound so each engineer sees it; the reviewer sees both the plan and the joined engineer output.",
+  "lifecycle": { "tags": ["delivery", "review"] },
+  "phases": [
+    {
+      "name": "architect",
+      "agent": "agents/pm.md",
+      "as": "plan",
+      "prompt": "Turn this request into a concrete plan. List the independent workstreams (3-5) — each one a self-contained chunk an engineer can pick up without coordinating with the others. State the success criteria for each:\n\n${input}"
+    },
+    {
+      "name": "engineers",
+      "parallel": [
+        {
+          "name": "track-a",
+          "agent": "agents/dev.md",
+          "prompt": "Plan:\n\n${plan}\n\nImplement TRACK A only. Stay in your lane — do not touch other tracks."
+        },
+        {
+          "name": "track-b",
+          "agent": "agents/dev.md",
+          "prompt": "Plan:\n\n${plan}\n\nImplement TRACK B only. Stay in your lane — do not touch other tracks."
+        },
+        {
+          "name": "track-c",
+          "agent": "agents/dev.md",
+          "prompt": "Plan:\n\n${plan}\n\nImplement TRACK C only. Stay in your lane — do not touch other tracks."
+        }
+      ]
+    },
+    {
+      "name": "reviewer",
+      "agent": "agents/critique.md",
+      "prompt": "Original plan:\n\n${plan}\n\nMerged engineer output:\n\n${input}\n\nReview for cohesion: do the tracks fit together, where are the seams thin, what got missed, what would you cut. Be specific — quote phases by name."
+    }
+  ],
+  "_layout": {
+    "architect": [
+      320,
+      380
+    ]
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "intake-demo",
+  "description": "Event intake end to end, with no model calls: an inbound event is scrubbed before it is stored, a repeat of the same key is suppressed, one run per key holds at a time, a human approves before anything leaves the run, and the approved event is filed as a ticket through an HTTP step. Pair it with demo/sink.mjs, which plays the ticket tracker and the chat webhook.",
+  "lifecycle": {
+    "tags": [
+      "demo",
+      "intake"
+    ]
+  },
+  "triggers": [
+    {
+      "kind": "queue",
+      "queue": "intake-demo",
+      "idempotencyTtlSeconds": 120,
+      "scrub": {
+        "allowFields": [
+          "key",
+          "title",
+          "severity",
+          "reporter",
+          "detail"
+        ],
+        "hashFields": [
+          "reporter"
+        ]
+      }
+    }
+  ],
+  "concurrency": {
+    "group": "intake:${input.key}",
+    "policy": "skip"
+  },
+  "limits": {
+    "maxRunsPerDay": 25
+  },
+  "notify": {
+    "onGate": "http://127.0.0.1:5199/notify"
+  },
+  "phases": [
+    {
+      "name": "read-event",
+      "as": "event",
+      "description": "Normalise the (already scrubbed) event.",
+      "code": {
+        "source": "const e = JSON.parse(input || '{}');\nreturn {\n  key: e.key || 'unknown',\n  title: e.title || '(untitled)',\n  severity: e.severity || 'unknown',\n  reporter: e.reporter || null,\n  detail: e.detail || '',\n};"
+      }
+    },
+    {
+      "name": "route",
+      "switch": {
+        "on": "${event.severity}",
+        "cases": {
+          "low": {
+            "name": "log-only",
+            "code": {
+              "source": "return 'Low severity: recorded, no ticket.';"
+            }
+          }
+        },
+        "default": {
+          "name": "escalate",
+          "phases": [
+            {
+              "name": "approve-ticket",
+              "lock": true,
+              "description": "A human approves before the run files anything outside itself.",
+              "code": {
+                "source": "const e = JSON.parse(state.event);\nreturn 'File a ' + e.severity + ' ticket for ' + e.key + ': ' + e.title;"
+              }
+            },
+            {
+              "name": "file-ticket",
+              "http": {
+                "url": "http://127.0.0.1:5199/tickets",
+                "method": "POST",
+                "body": {
+                  "key": "${event.key}",
+                  "title": "${event.title}",
+                  "severity": "${event.severity}",
+                  "reporter": "${event.reporter}",
+                  "detail": "${event.detail}"
+                },
+                "allowHosts": [
+                  "127.0.0.1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

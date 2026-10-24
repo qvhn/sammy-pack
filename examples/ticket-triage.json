@@ -1,0 +1,43 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "ticket-triage",
+  "description": "Classify an inbound ticket and route it to the right handler — bug, feature, question, or design. Copy this and swap the branch agents for your team's specialists.",
+  "lifecycle": { "tags": ["triage", "routing"] },
+  "phases": [
+    {
+      "name": "route-ticket",
+      "description": "Router agent reads the ticket and picks a branch.",
+      "route": {
+        "router": "agents/router.md",
+        "branches": {
+          "bug": {
+            "name": "diagnose-bug",
+            "agent": "agents/dev.md",
+            "description": "Reproduce + root-cause the defect.",
+            "retry": { "times": 2, "backoff": "exponential", "initialMs": 1000 }
+          },
+          "feature": {
+            "name": "scope-feature",
+            "agent": "agents/dev-lead.md",
+            "description": "Turn the request into a scoped plan."
+          },
+          "question": {
+            "name": "answer-question",
+            "agent": "agents/summarizer.md",
+            "description": "Answer directly from existing context."
+          },
+          "design": {
+            "name": "design-proposal",
+            "agent": "agents/uxui.md",
+            "description": "Draft a design response."
+          }
+        },
+        "default": {
+          "name": "needs-human",
+          "agent": "agents/pm.md",
+          "description": "Ambiguous ticket — a PM decides where it goes."
+        }
+      }
+    }
+  ]
+}

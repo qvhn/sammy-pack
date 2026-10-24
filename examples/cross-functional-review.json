@@ -1,0 +1,40 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "cross-functional-review",
+  "description": "Draft → multi-discipline review board → synthesized rewrite. Branches in the converge are distinct perspectives (product / UX / engineering) reading the SAME draft; a merger agent synthesizes their feedback, and the writer produces a final pass informed by it. Use when a piece of work is correct-in-isolation but needs sign-off from multiple disciplines before shipping.",
+  "lifecycle": { "tags": ["review", "fan-out"] },
+  "phases": [
+    {
+      "name": "draft",
+      "agent": "agents/writer.md",
+      "as": "draft",
+      "prompt": "Produce a first draft addressing the request below. Optimize for clarity over completeness — this is going to a review board next.\n\n${input}"
+    },
+    {
+      "name": "review-board",
+      "converge": [
+        {
+          "name": "product-perspective",
+          "agent": "agents/pm.md",
+          "prompt": "Draft:\n\n${draft}\n\nReview from a PRODUCT angle: does it match user intent, are the goals + non-goals clear, what would land flat. Be terse, bullet form."
+        },
+        {
+          "name": "ux-perspective",
+          "agent": "agents/uxui.md",
+          "prompt": "Draft:\n\n${draft}\n\nReview from a UX angle: information hierarchy, friction, missing affordances, what a first-time reader would misread. Be terse, bullet form."
+        },
+        {
+          "name": "engineering-perspective",
+          "agent": "agents/dev-lead.md",
+          "prompt": "Draft:\n\n${draft}\n\nReview from a FEASIBILITY angle: what's hand-wavy, what's expensive, what assumes infrastructure we don't have. Be terse, bullet form."
+        }
+      ],
+      "merger": "agents/summarizer.md"
+    },
+    {
+      "name": "final",
+      "agent": "agents/writer.md",
+      "prompt": "Original draft:\n\n${draft}\n\nReview-board synthesis:\n\n${input}\n\nProduce the final version. Address every concern that's in scope; flag any concern you chose to defer + why."
+    }
+  ]
+}

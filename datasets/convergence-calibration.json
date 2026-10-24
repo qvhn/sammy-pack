@@ -1,0 +1,152 @@
+{
+  "name": "convergence-calibration",
+  "description": "Labeled loop trajectories for calibrating judge-convergence. Each row describes the latest iteration of a repair/refinement loop with enough history to judge the trajectory; expectedOutput is the human call (STOP/CONTINUE). STOP covers all three stop reasons — done, oscillating, stalled — including traps: constant failure counts that hide oscillation, claimed progress with flat metrics, and noisy-but-green exits. CONTINUE covers genuine progress, including traps that look stop-worthy (a new failure surfaced by progress, all-units-green-but-goal-not-met). Run via the convergence-calibration eval (exact scorer).",
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000,
+  "rows": [
+    {
+      "id": "conv-1",
+      "input": "Iteration 3 of the fix loop: all 42 unit tests pass and lint is clean. Iteration 2 had two failures; both are resolved and no new failures appeared.",
+      "expectedOutput": "STOP",
+      "tags": ["done"]
+    },
+    {
+      "id": "conv-2",
+      "input": "Iteration 2 of draft-critique: the critique pass returned no remaining objections and approved the draft as-is.",
+      "expectedOutput": "STOP",
+      "tags": ["done"]
+    },
+    {
+      "id": "conv-3",
+      "input": "Iteration 4: the reported defect no longer reproduces under the original repro script, and the new regression test has passed 5 consecutive runs.",
+      "expectedOutput": "STOP",
+      "tags": ["done"]
+    },
+    {
+      "id": "conv-4",
+      "input": "Iteration 1: the acceptance suite — the loop's stated exit criterion — is fully green. The build log also printed 14 deprecation warnings and 3 TODO notes, none of which are part of the exit criteria.",
+      "expectedOutput": "STOP",
+      "tags": ["done", "borderline"]
+    },
+    {
+      "id": "conv-5",
+      "input": "Iteration 5: the rubric score reached 0.93 against the 0.90 stop threshold, up from 0.84 last iteration.",
+      "expectedOutput": "STOP",
+      "tags": ["done"]
+    },
+    {
+      "id": "conv-6",
+      "input": "Iteration 5: fixing the date parser broke the currency formatter again. The same two test failures have alternated since iteration 2 — whenever one is fixed, the other reappears.",
+      "expectedOutput": "STOP",
+      "tags": ["oscillating"]
+    },
+    {
+      "id": "conv-7",
+      "input": "Iteration 6: the diff applied this round reverts the exact change made in iteration 4, which itself reverted iteration 2. The failure signature cycles between the same two states.",
+      "expectedOutput": "STOP",
+      "tags": ["oscillating"]
+    },
+    {
+      "id": "conv-8",
+      "input": "Iteration 4: still exactly 2 failing tests, same count as iterations 2 and 3 — but the identity changes every round: cart_total fails and gets fixed, then checkout_tax fails and gets fixed, then cart_total fails again.",
+      "expectedOutput": "STOP",
+      "tags": ["oscillating", "borderline"]
+    },
+    {
+      "id": "conv-9",
+      "input": "Iteration 7: each fix to the session-refresh logic re-breaks remember-me, and each remember-me fix re-breaks session refresh. Five iterations of trading the same pair of failures.",
+      "expectedOutput": "STOP",
+      "tags": ["oscillating"]
+    },
+    {
+      "id": "conv-10",
+      "input": "Iterations 3, 4, and 5 all end with the same 7 failing tests with identical stack traces. The failure set has not changed in three rounds.",
+      "expectedOutput": "STOP",
+      "tags": ["stalled"]
+    },
+    {
+      "id": "conv-11",
+      "input": "Iteration 6 of draft-critique: the critique raises the same three objections, nearly verbatim, that it raised in iterations 3, 4, and 5. The revisions are not addressing them.",
+      "expectedOutput": "STOP",
+      "tags": ["stalled"]
+    },
+    {
+      "id": "conv-12",
+      "input": "Iteration 5: the worker reports 'good progress this round' — but the integration error count is 12, the same as iterations 3 and 4, and the set of failing endpoints is unchanged.",
+      "expectedOutput": "STOP",
+      "tags": ["stalled", "borderline"]
+    },
+    {
+      "id": "conv-13",
+      "input": "Failures dropped 9 to 4 to 2 across the last three iterations; the two remaining are both in the module the next fix targets.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-14",
+      "input": "Critique items went from 7 to 3 this round; the remaining three are minor wording issues, not structural objections.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-15",
+      "input": "Iteration 3: total failures fell from 8 to 3. One failure is new — a test that was previously skipped became reachable once the import error was fixed — and the other 7 from last round are all resolved.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress", "borderline"]
+    },
+    {
+      "id": "conv-16",
+      "input": "Iteration 1 just finished: 12 of 20 acceptance checks now pass; before the first fix, 0 of 20 passed. No repeated-failure history yet.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-17",
+      "input": "The score moved 0.62 to 0.71 to 0.78 over three iterations against a 0.90 target; each revision addressed concrete critique items.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-18",
+      "input": "Iteration 4: all unit tests now pass — but the loop's stated goal is the end-to-end checkout scenario, which still fails. Its assertion-failure count dropped from 5 to 1 this round.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["borderline"]
+    },
+    {
+      "id": "conv-19",
+      "input": "Iteration 2: the build compiles for the first time (iterations 0 and 1 failed at compile). The test phase is now reachable, with 6 failures to work through.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-20",
+      "input": "Lint errors went 31 to 9 to 2 across iterations; the goal is zero and the remaining two are autofixable.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-21",
+      "input": "p95 latency: 840ms to 610ms to 420ms over three optimization passes; the target is 300ms.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-22",
+      "input": "Iteration 3 of draft-critique: the document structure was approved this round (it was rejected in iterations 1 and 2); the only remaining objection is the missing citations section.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-23",
+      "input": "Migration repair, iteration 2: 4 of 7 modules now migrate cleanly, up from 1 of 7; no failure has recurred once fixed.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress"]
+    },
+    {
+      "id": "conv-24",
+      "input": "Iteration 5: failures went 6 to 5 this round — slower than earlier rounds, but the one fixed was the hardest (the deadlock), and the remaining five share a single root cause identified this iteration.",
+      "expectedOutput": "CONTINUE",
+      "tags": ["progress", "borderline"]
+    }
+  ]
+}

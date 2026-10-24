@@ -1,0 +1,103 @@
+# --- Dependencies & build artifacts ---
+node_modules/
+dist/
+build/
+.vite/
+*.log
+
+# --- Env / secrets ---
+.env
+.env.local
+.env.*.local
+# Connections registry — holds real API tokens, OAuth tokens, AWS keys.
+# Track credentials.example.json instead. SAMMY_CONNECTIONS_FILE can
+# point at an external file (e.g. ~/.config/sammy/connections.json)
+# for users who want connections outside the repo entirely.
+credentials.json
+# Bulk-export downloads from Connections → Export all.
+sammy-connections-*.json
+# Backup-panel exports (Settings → Backup, prefs-only after Option B).
+sammy-prefs-*.json
+sammy-settings-*.json
+
+# --- Scratch / experimental (not part of the toolkit) ---
+# A local-only working tree someone drops in beside the repo. Keep the
+# NAME generic here: a tracked ignore file is a public statement about
+# what sits on the author's disk, and machine-specific paths belong in
+# .git/info/exclude instead.
+scratch/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Claude Code local state (keep shared skills/CLAUDE.md, drop personal) ---
+.claude/settings.local.json
+.claude/.cache/
+
+# --- Test / tooling artifacts ---
+.playwright-mcp/
+coverage/
+*.tsbuildinfo
+
+# --- Runtime outputs (not source) ---
+runs/
+runs.db
+runs.db-shm
+runs.db-wal
+# Operator intake pauses (POST /api/orchestrations/<name>/pause) — runtime state.
+intake-pauses.json
+# Per-run git worktrees (root `worktrees`; SAMMY_WORKTREE_DIR overrides).
+.worktrees/
+# Cross-run memory store — per-deployment accumulated learnings, not source.
+memory-store/
+# ./sammy-pack dev-server script runtime (pid / port / log).
+.sammy-pack-run/
+
+# --- iOS ---
+app/ios/Pods/
+app/ios/build/
+app/ios/**/xcuserdata/
+app/ios/DerivedData/
+
+# --- Android ---
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties
+app/android/.idea/
+*.keystore
+!debug.keystore
+
+# vite web build output
+app/web-dist/
+
+# --- Internal-only docs (planning / scratch) ---
+# The committed docs/ explain how sammy-pack works (architecture, patterns,
+# schema). Keep working notes / drafts under docs/internal/ — they stay on
+# disk locally and out of version control.
+docs/internal/
+
+# --- Machine-specific MCP server registry (idb, atlassian, ...) ---
+# Read by server-owned runs (run-runner.ts loadMcpRegistry). May reference
+# local paths / SSE endpoints tied to this machine; never committed.
+mcp/servers.json
+mcp/
+
+# --- Stray screenshots / scratch images at the top level ---
+# Loose images dropped into the repo root or app/ are almost always
+# domain-specific captures (app screens, device recordings) — exactly the
+# content the prime directive keeps out of version control, and exactly what
+# an accidental `git add -A` would sweep in. Ignored at these two depths ONLY,
+# so genuine nested assets (android res/, docs/assets/) stay committable.
+/*.png
+/*.jpg
+/*.jpeg
+/app/*.png
+/app/*.jpg
+/app/*.jpeg
+
+# Personal demo settings (identity, local paths) — never committed.
+demo/*.local.env

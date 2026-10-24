@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "blast-radius-classify",
+  "description": "Calibration harness orchestration: routes a change/defect description through judge-blast-radius and emits the CHOSEN radius as its output (each branch is a code node returning its own name). That makes the judge eval-able — an eval with an `exact` scorer measures how accurately it scopes re-testing (isolated vs. local vs. wide) against labeled changes. Pair with datasets/blast-radius-calibration.json + evals/blast-radius-calibration.json.",
+  "lifecycle": { "tags": ["judge", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-blast-radius.md",
+        "branches": {
+          "isolated": { "name": "is-isolated", "code": { "source": "return 'isolated'" } },
+          "local": { "name": "is-local", "code": { "source": "return 'local'" } },
+          "wide": { "name": "is-wide", "code": { "source": "return 'wide'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

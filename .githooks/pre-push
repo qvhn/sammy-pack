@@ -1,0 +1,9 @@
+#!/bin/sh
+# Local CI gate — mirrors .github/workflows/ci.yml so every push (and therefore
+# every PR) is verified locally, for free. Bypass a throwaway WIP push with:
+#   git push --no-verify
+set -e
+echo "[pre-push] local CI: typecheck + test + build:web…"
+cd "$(git rev-parse --show-toplevel)/app"
+npm run ci
+echo "[pre-push] ✓ local CI passed"

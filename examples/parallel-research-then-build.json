@@ -1,0 +1,84 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "parallel-research-then-build",
+  "description": "Research from multiple sources in parallel, converge findings, then build. Demonstrates converge + nested phases.",
+  "lifecycle": { "tags": ["delivery", "research", "fan-out"] },
+  "phases": [
+    {
+      "name": "research",
+      "description": "Three scouts read different sources; merger synthesizes.",
+      "converge": [
+        {
+          "name": "jira",
+          "agent": "agents/jira-scout.md"
+        },
+        {
+          "name": "code",
+          "agent": "agents/code-scout.md"
+        },
+        {
+          "name": "figma",
+          "agent": "agents/figma-scout.md"
+        }
+      ],
+      "merger": "agents/research-synthesizer.md"
+    },
+    {
+      "name": "build",
+      "phases": [
+        {
+          "name": "plan",
+          "agent": "agents/dev-lead.md",
+          "lock": true
+        },
+        {
+          "name": "implement",
+          "agent": "agents/dev.md"
+        },
+        {
+          "name": "qa",
+          "parallel": [
+            {
+              "name": "unit",
+              "agent": "agents/unit-qa.md"
+            },
+            {
+              "name": "ui",
+              "agent": "agents/ui-qa.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "review",
+      "agent": "agents/review.md"
+    }
+  ],
+  "_layout": {
+    "research": [
+      -20,
+      94
+    ],
+    "build": [
+      2,
+      386
+    ],
+    "review": [
+      0,
+      572
+    ],
+    "phase-4": [
+      860,
+      200
+    ],
+    "q": [
+      1120,
+      200
+    ],
+    "QA": [
+      1380,
+      200
+    ]
+  }
+}

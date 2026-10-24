@@ -1,0 +1,60 @@
+{
+  "name": "@sammy-pack/cli",
+  "version": "0.1.0-alpha.0",
+  "description": "Standalone CLI for the sammy-pack orchestration engine. Run JSON-defined agent workflows from the terminal against any of Anthropic / OpenAI / Gemini.",
+  "type": "module",
+  "bin": {
+    "sammy": "bin/sammy.js",
+    "sammy-pack": "bin/sammy.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "plugin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agent",
+    "cli",
+    "orchestration",
+    "llm",
+    "workflow",
+    "mcp",
+    "claude-code"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.143",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "better-sqlite3": ">=12.0.0",
+    "pg": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qvhn/sammy-pack.git",
+    "directory": "app/packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/qvhn/sammy-pack/issues"
+  },
+  "homepage": "https://github.com/qvhn/sammy-pack#readme"
+}

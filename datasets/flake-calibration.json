@@ -1,0 +1,152 @@
+{
+  "name": "flake-calibration",
+  "description": "Labeled failing-check reports for calibrating judge-flake. Each row is a red check plus repeated-run evidence; expectedOutput is the human adjudication (flaky/real). Traps included both ways: scary signatures (segfault, deadlock-as-timeout) that are environment noise, deterministic-on-one-host failures that are stale-cache flakes, intermittent failures that are actually input-correlated regressions, and previously-quarantined tests that turned real. Run via the flake-calibration eval (exact scorer).",
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000,
+  "rows": [
+    {
+      "id": "flake-1",
+      "input": "test_export_csv failed once in CI, then passed on immediate re-run with no code change. Three further re-runs: all green. The failure was a 30s timeout waiting for the worker queue to drain.",
+      "expectedOutput": "flaky",
+      "tags": ["rerun-pass"]
+    },
+    {
+      "id": "flake-2",
+      "input": "checkout_e2e fails in roughly 1 of 5 runs. The failing step differs each time — sometimes the address form, sometimes the payment step. The error is always a stale-element exception.",
+      "expectedOutput": "flaky",
+      "tags": ["varying-signature"]
+    },
+    {
+      "id": "flake-3",
+      "input": "test_session_refresh passes in isolation and locally, but fails when it runs immediately after test_user_cache. Shuffling the test order moves the failure to whichever test follows test_user_cache.",
+      "expectedOutput": "flaky",
+      "tags": ["order-dependent"]
+    },
+    {
+      "id": "flake-4",
+      "input": "report_rollover_test fails only in CI runs that start between 23:58 and 00:02 UTC; it asserts on a date computed from the current clock. Re-runs during the day pass 10 of 10.",
+      "expectedOutput": "flaky",
+      "tags": ["timing"]
+    },
+    {
+      "id": "flake-5",
+      "input": "Two of five re-runs fail with ECONNRESET against the third-party sandbox API; the other three pass. The PR under test touches only CSS.",
+      "expectedOutput": "flaky",
+      "tags": ["network"]
+    },
+    {
+      "id": "flake-6",
+      "input": "The suite intermittently crashes with a segfault — but only when run with 8 parallel workers on the shared runner. With workers disabled it passed 6 consecutive runs. The PR changes documentation only.",
+      "expectedOutput": "flaky",
+      "tags": ["resource", "borderline"]
+    },
+    {
+      "id": "flake-7",
+      "input": "Visual regression on dashboard_header: pixel diffs of 0.3-0.9% appear only on the shared CI runner, with different pixels flagged each run; it passes locally every time across 5 attempts.",
+      "expectedOutput": "flaky",
+      "tags": ["varying-signature"]
+    },
+    {
+      "id": "flake-8",
+      "input": "Nightly CI ran the suite 6 times: 4 green, 2 red. The red runs fail different, unrelated tests each time (once search_index, once email_render).",
+      "expectedOutput": "flaky",
+      "tags": ["varying-signature"]
+    },
+    {
+      "id": "flake-9",
+      "input": "inventory_sync_test fails intermittently on the PR branch at about 1 in 4 runs — and shows the same 1-in-4 failure rate on main with no diff applied.",
+      "expectedOutput": "flaky",
+      "tags": ["preexisting", "borderline"]
+    },
+    {
+      "id": "flake-10",
+      "input": "The test asserts the queue length immediately after an async enqueue with no await. It fails about 30% of runs; inserting a 50ms wait makes it pass 20 of 20.",
+      "expectedOutput": "flaky",
+      "tags": ["race"]
+    },
+    {
+      "id": "flake-11",
+      "input": "Failed with ENOSPC (disk full) on runner ci-07 while the nightly load test shared the machine; the re-run after cleanup passed. Two later runs on other machines: green.",
+      "expectedOutput": "flaky",
+      "tags": ["resource"]
+    },
+    {
+      "id": "flake-12",
+      "input": "build_artifacts_test fails every time — but only on runner host ci-03; it passes on every other host. ci-03 had a stale Docker layer cache; after the cache was cleared the test passed 5 of 5 there too.",
+      "expectedOutput": "flaky",
+      "tags": ["environment", "borderline"]
+    },
+    {
+      "id": "flake-13",
+      "input": "currency_format_test fails 5 of 5 re-runs with the identical assertion: expected 'EUR', received 'USD' at currency.ts:88. The PR under test changes currency formatting.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-14",
+      "input": "Since the schema migration in this PR, every run fails with 'column user_tier does not exist' — same message, same line, 6 of 6 runs.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-15",
+      "input": "The test times out — but at exactly the same await on all 6 re-runs, and the PR removed the promise resolution that await depends on. Before the PR, 20 consecutive runs were green.",
+      "expectedOutput": "real",
+      "tags": ["deterministic", "borderline"]
+    },
+    {
+      "id": "flake-16",
+      "input": "Snapshot mismatch identical across 4 of 4 runs; the diff is exactly the copy change this PR makes to the empty-state text, and the snapshot was not updated.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-17",
+      "input": "list_users_test failed 3 of 7 runs — every failing run used seeded fixture B, which contains a null email. Re-running with fixture B pinned fails 10 of 10; fixture A passes 10 of 10.",
+      "expectedOutput": "real",
+      "tags": ["input-dependent", "borderline"]
+    },
+    {
+      "id": "flake-18",
+      "input": "git bisect pins the failure to commit 4f2a91c from this branch; at that commit it reproduces 10 of 10 locally, and 0 of 10 at the parent commit.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-19",
+      "input": "rounding_test fails consistently — expected 2 decimal places, got 3 — in all 5 re-runs, matching the math refactor in the diff.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-20",
+      "input": "pricing_table_test carries a quarantine label from last quarter — but since yesterday's caching change it fails 8 of 8 runs with one stable signature: a cache key collision in price_cache.ts.",
+      "expectedOutput": "real",
+      "tags": ["deterministic", "borderline"]
+    },
+    {
+      "id": "flake-21",
+      "input": "The integration test gets a 401 from the auth middleware on every single run since the header rename in this diff; same status, same route, 7 of 7.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-22",
+      "input": "The e2e fails at the same step every run: the submit button stays disabled because the new required 'company size' field added by this PR is never filled by the script.",
+      "expectedOutput": "real",
+      "tags": ["deterministic"]
+    },
+    {
+      "id": "flake-23",
+      "input": "A single CI failure; no re-runs have been performed yet. The assertion is specific — expected 412, received 409 — and sits in the file this PR modifies.",
+      "expectedOutput": "real",
+      "tags": ["thin-evidence"]
+    },
+    {
+      "id": "flake-24",
+      "input": "Looks like an infra timeout, but all 6 re-runs hang at the same lock acquisition in sync_service.ts, and the PR introduced a second lock taken in reverse order. Thread dumps show the identical deadlock each run.",
+      "expectedOutput": "real",
+      "tags": ["deterministic", "borderline"]
+    }
+  ]
+}

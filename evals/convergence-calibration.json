@@ -1,0 +1,11 @@
+{
+  "name": "convergence-calibration",
+  "description": "Calibration eval for judge-convergence. Runs convergence-classify against the labeled convergence-calibration dataset and scores the emitted decision EXACTLY against the human label. Pass rate = stop/continue accuracy; the per-row drilldown shows exactly which trajectories the judge mis-calls (stopping real progress vs. letting oscillating or stalled loops burn budget), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start.",
+  "orchestrationName": "convergence-classify",
+  "datasetName": "convergence-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000
+}

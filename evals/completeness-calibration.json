@@ -1,0 +1,11 @@
+{
+  "name": "completeness-calibration",
+  "description": "Calibration eval for judge-completeness. Runs completeness-classify against the labeled completeness-calibration dataset and scores the emitted anchor score (1.0/0.5/0.0) EXACTLY against the human label. Pass rate = anchor accuracy; the per-row drilldown shows which outputs the judge over-credits (placeholder filler, eloquent off-topic prose) or under-credits (terse-but-complete answers), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start.",
+  "orchestrationName": "completeness-classify",
+  "datasetName": "completeness-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000
+}

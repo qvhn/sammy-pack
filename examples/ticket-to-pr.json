@@ -1,0 +1,198 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "ticket-to-pr",
+  "description": "A Jira ticket becomes a validated pull request. The run plans from the ticket (its text and attachments) and your repository, asks you only the questions it cannot reasonably answer itself, then implements in an isolated git worktree and loops — implement, review and QA in parallel, decide — until the change is ready to ship (up to three passes). QA exercises the change the way a user would, not by reading files. You approve before anything leaves the machine; the PR opens from the run's branch (a draft listing what is outstanding if three passes were not enough).",
+  "lifecycle": {
+    "tags": [
+      "delivery",
+      "starter"
+    ]
+  },
+  "vars": {
+    "answers": "(No blocking questions were raised — proceed on the brief's stated assumptions.)",
+    "verdict": "(First pass — there is no review feedback yet.)"
+  },
+  "inputs": [
+    {
+      "name": "ticket",
+      "kind": "jira",
+      "required": true,
+      "description": "The work to do, in whatever form you have it: a Jira key or link (the issue, its attachments and a link are fetched through the Atlassian connection), a GitHub issue link, any other link, or just a description typed here."
+    },
+    {
+      "name": "repo",
+      "kind": "text",
+      "required": true,
+      "description": "The repository the change lands in: a local path, or its URL (a local clone is found, or the Run dialog offers to clone it). The run works in its own worktree on a fresh branch, never in your checkout."
+    }
+  ],
+  "worktrees": [
+    {
+      "name": "repo",
+      "repo": "${repo}"
+    }
+  ],
+  "sandbox": {
+    "deniedCommands": [
+      "git push --force",
+      "git push -f",
+      "git reset --hard"
+    ]
+  },
+  "phases": [
+    {
+      "name": "plan",
+      "agent": "agents/dev-lead.md",
+      "as": "brief",
+      "timeout": 900,
+      "tools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ],
+      "description": "Turns the ticket into a working brief: goal, checkable acceptance criteria, the assumptions it made, and only the questions that truly block.",
+      "prompt": "You are planning the work for this ticket. Your working directory, ${worktrees.repo.path}, is a fresh git worktree of the repository it lands in.\n\n${ticket}\n\nThe ticket above is complete — do not look it up again. Read it, look at every attachment it lists, and look at the repository (its structure, conventions, any README or CLAUDE.md). Then write a working brief for the engineer:\n\n## Goal\nOne or two sentences.\n\n## Acceptance criteria\nA numbered list. Each one must be checkable by looking at or running the result.\n\n## Assumptions\nThe decisions you made where the ticket is silent. Make the sensible call a good engineer would make (stack, file layout, styling, placeholder vs. real content) and say what you chose. Do not ask about these.\n\n## Questions\nOnly questions where a wrong guess would mean redoing the work, and that neither the ticket nor the repository answers. Usually there are none — write \"None.\" then.\n\nEnd with exactly one line: `NEEDS-ANSWERS: yes` if you listed a blocking question, otherwise `NEEDS-ANSWERS: no`."
+    },
+    {
+      "name": "needs-answers",
+      "as": "needsAnswers",
+      "description": "Reads the brief's last line: is a person needed before building?",
+      "code": {
+        "source": "return /NEEDS-ANSWERS:\\s*yes/i.test(input) ? 'yes' : 'no';"
+      }
+    },
+    {
+      "name": "answers",
+      "agent": "agents/dev-lead.md",
+      "as": "answers",
+      "lock": true,
+      "when": "${needsAnswers}",
+      "timeout": 600,
+      "description": "Only when the brief raised blocking questions: the run waits for you, and your approval note is the answer.",
+      "prompt": "The planning brief raised blocking questions:\n\n${brief}\n\nThe person's answers are in the HUMAN INSTRUCTION block below. Restate them as a short, numbered list of decisions the engineer must follow, each tied to the question it answers. If a question was left unanswered, keep the brief's assumption for it and say so."
+    },
+    {
+      "name": "build",
+      "description": "Implement, check, decide — repeated until the decision is SHIP, at most three passes. Each pass fixes what the previous one's checks found.",
+      "loop": {
+        "maxIterations": 3,
+        "until": "DECISION: SHIP",
+        "body": {
+          "name": "pass",
+          "phases": [
+            {
+              "name": "implement",
+              "agent": "agents/dev.md",
+              "as": "change",
+              "timeout": 1800,
+              "tools": [
+                "Read",
+                "Edit",
+                "Write",
+                "Glob",
+                "Grep",
+                "Bash"
+              ],
+              "prompt": "Implement this ticket in your working directory, ${worktrees.repo.path} — a git worktree of the repository, on branch ${worktrees.repo.branch}. Every file you create goes under that directory: use paths relative to it, or absolute paths that start with it.\n\n${ticket}\n\nWorking brief:\n\n${brief}\n\nAnswers from the person (these override the brief's assumptions):\n\n${answers}\n\nFeedback from the previous pass (fix every item it lists; ignore this on the first pass):\n\n${verdict}\n\nRules:\n- Meet every acceptance criterion in the brief. Use the ticket's attachments where the ticket refers to them — copy them into the repository; do not substitute a drawing or placeholder for a file you were given.\n- Write real content, not lorem ipsum, unless the brief's assumptions say otherwise.\n- Before you commit, validate the result the way its user would experience it: run the tests or the build; for a web page, serve it locally, load it in a headless browser, take a screenshot and look at it (Read the image). Fix what looks wrong. To serve a page, start the server so you can stop exactly it: `python3 -m http.server <port> >/dev/null 2>&1 & SERVER_PID=$!` and later `kill $SERVER_PID`. Never stop processes by port (`lsof -ti:<port> | xargs kill` and the like) — that also matches your own process and ends your session.\n- Delete what you created only to validate (screenshots, logs, tool output folders) — it never goes in the commit.\n- Commit on ${worktrees.repo.branch} with a message that starts with the ticket key.\n\nReturn: what you changed (files), how you validated it (commands and what you saw), and anything you could not do.",
+              "onError": {
+                "name": "implement-ask",
+                "agent": "agents/dev.md",
+                "as": "change",
+                "lock": true,
+                "timeout": 1800,
+                "tools": [
+                  "Read",
+                  "Edit",
+                  "Write",
+                  "Glob",
+                  "Grep",
+                  "Bash"
+                ],
+                "description": "Only if implementing fails: the run stops and shows you why; your approval note is guidance, and it tries again.",
+                "prompt": "Implementing this ticket failed:\n\n${error.message}\n\nTicket:\n\n${ticket}\n\nWorking brief:\n\n${brief}\n\nAnswers from the person:\n\n${answers}\n\nThe person's guidance is in the HUMAN INSTRUCTION block below. Work in ${worktrees.repo.path} (branch ${worktrees.repo.branch}); pick up from what is already there, follow the guidance, validate the result, and commit. Return what you changed, how you validated it, and anything still open."
+              }
+            },
+            {
+              "name": "checks",
+              "parallel": [
+                {
+                  "name": "review",
+                  "agent": "agents/review.md",
+                  "as": "reviewNotes",
+                  "timeout": 900,
+                  "tools": [
+                    "Read",
+                    "Glob",
+                    "Grep",
+                    "Bash"
+                  ],
+                  "prompt": "Ticket:\n\n${ticket}\n\nWorking brief (its acceptance criteria are the bar):\n\n${brief}\n\nAnswers from the person:\n\n${answers}\n\nThe engineer's note:\n\n${change}\n\nReview the committed change in your working directory, ${worktrees.repo.path} (`git log`, `git show`). Does it meet each acceptance criterion? Is it the right shape for this repository? Mark every finding blocking, should-fix or nice-to-have, with the file and line. Do not demand information the ticket does not give when the brief made a reasonable assumption, and do not invent nits."
+                },
+                {
+                  "name": "qa",
+                  "agent": "agents/qa-runner.md",
+                  "as": "qaNotes",
+                  "timeout": 900,
+                  "tools": [
+                    "Read",
+                    "Glob",
+                    "Grep",
+                    "Bash"
+                  ],
+                  "prompt": "Ticket:\n\n${ticket}\n\nWorking brief (its acceptance criteria are the bar):\n\n${brief}\n\nThe engineer's note:\n\n${change}\n\nExercise the committed change in your working directory, ${worktrees.repo.path} the way its user would — reading the files is not enough. Run the tests or the build if there are any. For a web page: serve the directory on a free local port (for example `python3 -m http.server`), fetch the page and every asset it references (each must return 200), then load it in a headless browser (Chrome or Chromium, e.g. `--headless --screenshot=<file> --window-size=1280,2000 <url>`) and Read the screenshot to see what a visitor sees. To serve a page, start the server so you can stop exactly it: `python3 -m http.server <port> >/dev/null 2>&1 & SERVER_PID=$!` and later `kill $SERVER_PID`. Never stop processes by port (`lsof -ti:<port> | xargs kill` and the like) — that also matches your own process and ends your session. Stop any server you started.\n\nReport PASS or FAIL for each acceptance criterion with the evidence (command, status codes, what the screenshot shows), then an overall PASS or FAIL.",
+                  "onError": {
+                    "name": "qa-ask",
+                    "agent": "agents/qa-runner.md",
+                    "as": "qaNotes",
+                    "lock": true,
+                    "timeout": 900,
+                    "tools": [
+                      "Read",
+                      "Glob",
+                      "Grep",
+                      "Bash"
+                    ],
+                    "description": "Only if QA itself fails to run: the run stops and shows you why; your approval note is guidance, and QA runs again.",
+                    "prompt": "QA could not complete:\n\n${error.message}\n\nBrief (its acceptance criteria are the bar):\n\n${brief}\n\nThe person's guidance is in the HUMAN INSTRUCTION block below. Validate the committed change in ${worktrees.repo.path} the way its user would, following the guidance. To serve a page, start the server so you can stop exactly it: `python3 -m http.server <port> >/dev/null 2>&1 & SERVER_PID=$!` and later `kill $SERVER_PID`. Never stop processes by port (`lsof -ti:<port> | xargs kill` and the like) — that also matches your own process and ends your session. Report PASS or FAIL per acceptance criterion with evidence, then an overall PASS or FAIL."
+                  }
+                }
+              ]
+            },
+            {
+              "name": "decide",
+              "agent": "agents/dev-lead.md",
+              "as": "verdict",
+              "timeout": 600,
+              "prompt": "Decide whether this change is ready to ship.\n\nWorking brief:\n\n${brief}\n\nReview:\n\n${reviewNotes}\n\nQA:\n\n${qaNotes}\n\nSHIP when every acceptance criterion has observed evidence and no blocking or should-fix finding is left. Nice-to-haves never block. Do not block on information the ticket does not provide when the brief made a reasonable assumption.\n\nIf the QA report is missing or says QA could not run, that is not something another implementation pass can fix: decide on the review and the engineer's own validation evidence, and say plainly that independent QA did not run.\n\nOtherwise FIX: give a numbered list of the exact changes the engineer must make next pass — each one concrete enough to act on without a follow-up question.\n\nEnd with exactly one line: `DECISION: SHIP` or `DECISION: FIX`."
+            }
+          ],
+          "timeout": 3600
+        }
+      },
+      "timeout": 10800
+    },
+    {
+      "name": "open-pr",
+      "agent": "agents/github-adapter.md",
+      "lock": true,
+      "timeout": 600,
+      "tools": [
+        "Bash"
+      ],
+      "description": "Waits for your approval — you see the final decision first — then opens the PR. The first step with an effect outside this run.",
+      "prompt": "Open a pull request for this work.\n\nTicket:\n\n${ticket}\n\nBrief:\n\n${brief}\n\nThe engineer's note:\n\n${change}\n\nFinal review and QA decision:\n\n${verdict}\n\nThe change is committed on branch ${worktrees.repo.branch} in your current directory (a worktree of the repository). Push it with `git push -u origin ${worktrees.repo.branch}`, then open the PR with `gh pr create` against the repository's default branch. Title: the ticket key and summary. Body: what changed, how it was validated (quote the QA evidence), the assumptions from the brief, and a link to the ticket (its Link line).\n\nIf the decision above ends with `DECISION: FIX`, open it as a draft (`--draft`) and list the outstanding items at the top of the body.\n\nReturn the PR URL.",
+      "onError": {
+        "name": "open-pr-ask",
+        "agent": "agents/github-adapter.md",
+        "lock": true,
+        "timeout": 600,
+        "tools": [
+          "Bash"
+        ],
+        "description": "Only if opening the PR fails (a rejected push, an auth problem): the run stops and shows you why; your approval note is guidance, and it tries again.",
+        "prompt": "Opening the pull request failed:\n\n${error.message}\n\nThe change is committed on branch ${worktrees.repo.branch} in ${worktrees.repo.path}. The person's guidance is in the HUMAN INSTRUCTION block below. Follow it, push the branch, and open the PR with `gh pr create` (title: the ticket key and summary; body: what changed, how it was validated, and the ticket link).\n\nTicket:\n\n${ticket}\n\nFinal decision:\n\n${verdict}\n\nReturn the PR URL."
+      }
+    }
+  ]
+}

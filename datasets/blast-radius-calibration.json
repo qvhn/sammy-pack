@@ -1,0 +1,152 @@
+{
+  "name": "blast-radius-calibration",
+  "description": "Labeled change descriptions for calibrating judge-blast-radius. Each row describes a change/fix/defect with its dependency facts; expectedOutput is the human-scoped radius (isolated/local/wide). Traps included in every direction: scary-area-but-no-op changes (isolated), huge diffs confined to one test fixture (isolated), one-liners in a base class or shared client lib (local/wide), and config-sounding changes to flag evaluation that touch every surface (wide). Run via the blast-radius-calibration eval (exact scorer).",
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000,
+  "rows": [
+    {
+      "id": "br-1",
+      "input": "Fixed a typo in the empty-state copy of the billing settings screen. The string is a literal inside that one component; it does not come from a shared strings file.",
+      "expectedOutput": "isolated",
+      "tags": ["copy"]
+    },
+    {
+      "id": "br-2",
+      "input": "Renamed a local variable inside a private helper in report-worker. The helper is not exported and has no callers outside the file.",
+      "expectedOutput": "isolated",
+      "tags": ["internal"]
+    },
+    {
+      "id": "br-3",
+      "input": "A change inside the auth module — but it only rewrites a doc comment and fixes indentation. The compiled output is byte-identical; CI's build-diff check confirms no behavioral change.",
+      "expectedOutput": "isolated",
+      "tags": ["no-op", "borderline"]
+    },
+    {
+      "id": "br-4",
+      "input": "Adjusted padding in the dashboard summary card's own stylesheet. The card is used on exactly one screen; the stylesheet is not imported anywhere else.",
+      "expectedOutput": "isolated",
+      "tags": ["style"]
+    },
+    {
+      "id": "br-5",
+      "input": "Added a new unit test for the slug generator. No production code was touched.",
+      "expectedOutput": "isolated",
+      "tags": ["test-only"]
+    },
+    {
+      "id": "br-6",
+      "input": "A 400-line diff — but every line is inside one regenerated mock fixture consumed by a single test file. No production code or shared fixture changed.",
+      "expectedOutput": "isolated",
+      "tags": ["test-only", "borderline"]
+    },
+    {
+      "id": "br-7",
+      "input": "Reworded the human-readable message text in one cron job's log line. Alerting matches on the structured event field, which is unchanged; a search of the alert rules confirms nothing matches the message text.",
+      "expectedOutput": "isolated",
+      "tags": ["logging"]
+    },
+    {
+      "id": "br-8",
+      "input": "Changed the default sort constant used by the archived-projects page. A repo-wide search shows exactly one import: that page.",
+      "expectedOutput": "isolated",
+      "tags": ["single-importer"]
+    },
+    {
+      "id": "br-9",
+      "input": "Refactored the date-formatting util imported by the invoices list and the invoice detail page — two importers, both inside the billing area.",
+      "expectedOutput": "local",
+      "tags": ["few-importers"]
+    },
+    {
+      "id": "br-10",
+      "input": "Tightened password validation in the shared password-field component. It is used by the signup form and the password-reset form; nothing else imports it.",
+      "expectedOutput": "local",
+      "tags": ["shared-component"]
+    },
+    {
+      "id": "br-11",
+      "input": "A one-line change — but in the base widget class extended by the three chart widgets on the analytics dashboard. All three inherit the changed behavior.",
+      "expectedOutput": "local",
+      "tags": ["inheritance", "borderline"]
+    },
+    {
+      "id": "br-12",
+      "input": "Modified the pagination component used by the four admin tables. It is admin-area only; the customer-facing tables use a different component.",
+      "expectedOutput": "local",
+      "tags": ["shared-component"]
+    },
+    {
+      "id": "br-13",
+      "input": "Bumped the charting library by a minor version. Charts render on three analytics screens; no other surface uses the library.",
+      "expectedOutput": "local",
+      "tags": ["dependency"]
+    },
+    {
+      "id": "br-14",
+      "input": "Changed the retry policy of the email-sending worker. It affects the transactional emails that queue feeds — welcome and receipt — and no other queues or jobs.",
+      "expectedOutput": "local",
+      "tags": ["worker"]
+    },
+    {
+      "id": "br-15",
+      "input": "A change under the api/ directory — but to an internal admin-only endpoint with exactly two consumers, both admin pages, confirmed via the route's access log.",
+      "expectedOutput": "local",
+      "tags": ["internal-api", "borderline"]
+    },
+    {
+      "id": "br-16",
+      "input": "Changed a CSS token in the settings theme file. The five settings sub-pages import it; a repo-wide search confirms no importers outside settings.",
+      "expectedOutput": "local",
+      "tags": ["style"]
+    },
+    {
+      "id": "br-17",
+      "input": "Changed the JSON shape of the shared API error envelope that every endpoint returns. All clients parse this envelope.",
+      "expectedOutput": "wide",
+      "tags": ["public-contract"]
+    },
+    {
+      "id": "br-18",
+      "input": "A database migration changes the users table primary key from int to UUID. Every service joins against users.",
+      "expectedOutput": "wide",
+      "tags": ["schema"]
+    },
+    {
+      "id": "br-19",
+      "input": "A one-line change to the default timeout in the shared HTTP client library — the client every service uses for internal calls.",
+      "expectedOutput": "wide",
+      "tags": ["shared-lib", "borderline"]
+    },
+    {
+      "id": "br-20",
+      "input": "The auth middleware now requires an X-Client-Version header. Every authenticated route passes through this middleware.",
+      "expectedOutput": "wide",
+      "tags": ["auth"]
+    },
+    {
+      "id": "br-21",
+      "input": "Upgraded the UI framework by a major version across the entire app; the render path of every screen is affected.",
+      "expectedOutput": "wide",
+      "tags": ["framework"]
+    },
+    {
+      "id": "br-22",
+      "input": "Renamed the order.completed event on the message bus. Producers in this repo were updated, but consumers in other services subscribe by event name.",
+      "expectedOutput": "wide",
+      "tags": ["events"]
+    },
+    {
+      "id": "br-23",
+      "input": "Changed the rule-evaluation order in the feature-flag service. Flags gate behavior on every surface, so evaluation-order changes can flip which variant any user sees anywhere.",
+      "expectedOutput": "wide",
+      "tags": ["flags", "borderline"]
+    },
+    {
+      "id": "br-24",
+      "input": "Rewrote the global state store's hydration logic that runs on every page load before any screen renders.",
+      "expectedOutput": "wide",
+      "tags": ["global-state"]
+    }
+  ]
+}

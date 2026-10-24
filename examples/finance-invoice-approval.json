@@ -1,0 +1,47 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "finance-invoice-approval",
+  "description": "Accounts-payable control flow: an analyst validates an invoice (math, policy, supporting docs), then a router applies the approval matrix — small/clean invoices auto-approve, standard ones go to a manager, and high-value ones hit a LOCKED executive sign-off before any money moves. Showcases `route` as an approval matrix and `lock` as the accountable money-out-the-door gate.",
+  "lifecycle": { "tags": ["business-ops"] },
+  "inputs": [
+    {
+      "name": "invoice",
+      "kind": "file",
+      "required": true,
+      "description": "The invoice to validate and approve (upload the PDF / document)."
+    }
+  ],
+  "phases": [
+    {
+      "name": "validate",
+      "agent": "agents/financial-analyst.md",
+      "as": "analysis",
+      "prompt": "Validate this invoice: does the math reconcile, is it within policy/budget, are supporting docs referenced, any anomalies. State the amount and the policy threshold it sits relative to.\n\nINVOICE:\n${invoice}"
+    },
+    {
+      "name": "apply-approval-matrix",
+      "description": "auto = under the auto-approval threshold and clean. escalate = above the manager threshold → locked executive sign-off. default = standard manager review.",
+      "route": {
+        "router": "agents/router.md",
+        "branches": {
+          "auto": {
+            "name": "auto-approve",
+            "agent": "agents/financial-analyst.md",
+            "prompt": "This invoice is under the auto-approval threshold and clean. Record the auto-approval with the control rationale (amount, checks passed).\n\nANALYSIS:\n${analysis}"
+          },
+          "escalate": {
+            "name": "executive-sign-off",
+            "agent": "agents/controller.md",
+            "lock": true,
+            "prompt": "High-value invoice above the manager threshold. Make the accountable approve / hold / reject call with full control rationale.\n\nANALYSIS:\n${analysis}"
+          }
+        },
+        "default": {
+          "name": "manager-review",
+          "agent": "agents/controller.md",
+          "prompt": "Standard invoice. Approve or hold per policy, citing the controls you checked.\n\nANALYSIS:\n${analysis}"
+        }
+      }
+    }
+  ]
+}

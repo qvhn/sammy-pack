@@ -1,0 +1,74 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "customer-signal-router",
+  "description": "Drains a queue of customer signals (support messages, in-app feedback, reviews) and routes each by what it needs. judge-triage separates real issues from chatter/dupes/vague, then judge-severity tiers the real ones to the right responder. Questions get answered, duplicates linked, noise auto-acknowledged. A queue-driven front door that keeps humans focused on what matters.",
+  "lifecycle": { "tags": ["support", "routing", "triage"] },
+  "triggers": [
+    { "kind": "queue", "queue": "customer-signals" }
+  ],
+  "phases": [
+    {
+      "name": "classify-signal",
+      "description": "Is this an actionable issue, a duplicate, noise, or too-vague?",
+      "route": {
+        "router": "agents/judge-triage.md",
+        "branches": {
+          "actionable": {
+            "name": "tier-by-severity",
+            "description": "Route the real issue to the right responder by severity.",
+            "route": {
+              "router": "agents/judge-severity.md",
+              "branches": {
+                "critical": {
+                  "name": "page-lead-critical",
+                  "agent": "agents/support-lead.md",
+                  "lock": true,
+                  "description": "Critical customer impact — escalate to the support lead immediately."
+                },
+                "high": {
+                  "name": "lead-high",
+                  "agent": "agents/support-lead.md",
+                  "description": "High impact — the support lead owns the response."
+                },
+                "medium": {
+                  "name": "agent-medium",
+                  "agent": "agents/support-agent.md",
+                  "description": "Normal issue — a support agent handles it."
+                },
+                "low": {
+                  "name": "agent-low",
+                  "agent": "agents/support-agent.md",
+                  "description": "Minor — quick acknowledgement + log."
+                }
+              },
+              "default": {
+                "name": "agent-default",
+                "agent": "agents/support-agent.md"
+              }
+            }
+          },
+          "duplicate": {
+            "name": "link-known",
+            "agent": "agents/support-agent.md",
+            "description": "Link to the known issue and acknowledge."
+          },
+          "noise": {
+            "name": "auto-acknowledge",
+            "agent": "agents/writer.md",
+            "description": "Chatter / praise / off-topic — send a friendly acknowledgement, no ticket."
+          },
+          "needs-info": {
+            "name": "request-detail",
+            "agent": "agents/writer.md",
+            "description": "Too vague to act on — ask the customer for specifics."
+          }
+        },
+        "default": {
+          "name": "human-review",
+          "agent": "agents/support-lead.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

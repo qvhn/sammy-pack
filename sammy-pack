@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# sammy-pack — start / stop the local dev server (web UI + API, served by Vite).
+#
+#   ./sammy-pack start [port]    launch (default port 5173; auto-bumps if busy)
+#   ./sammy-pack stop            stop the server this script started
+#   ./sammy-pack restart [port]  stop then start
+#   ./sammy-pack status          is it running, and on what URL
+#   ./sammy-pack logs            tail the dev-server log (Ctrl-C to exit)
+#
+# Runtime state (pid / port / log) lives in .sammy-pack-run/ and is gitignored.
+# Only manages the instance THIS script launches — other dev servers are left
+# alone.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP="$ROOT/app"
+RUN="$ROOT/.sammy-pack-run"
+PIDFILE="$RUN/server.pid"
+PORTFILE="$RUN/server.port"
+LOGFILE="$RUN/server.log"
+DEFAULT_PORT="${SAMMY_PORT:-5173}"
+
+mkdir -p "$RUN"
+
+is_running() {
+  [ -f "$PIDFILE" ] || return 1
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+url() { echo "http://localhost:$(cat "$PORTFILE" 2>/dev/null || echo '?')/"; }
+
+cmd_start() {
+  if is_running; then
+    echo "● already running (pid $(cat "$PIDFILE"))  →  $(url)"
+    return 0
+  fi
+  if [ ! -x "$APP/node_modules/.bin/vite" ]; then
+    echo "✗ dependencies not installed. First run:  (cd app && npm install)"
+    return 1
+  fi
+
+  local port="${1:-$DEFAULT_PORT}"
+  echo "Starting sammy-pack on port $port …"
+  ( cd "$APP" && exec node_modules/.bin/vite --port "$port" ) >"$LOGFILE" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$PIDFILE"
+
+  # Wait for Vite to announce its (possibly auto-bumped) port.
+  local actual="" i
+  for i in $(seq 1 60); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "✗ server exited during startup — last log lines:"
+      tail -n 15 "$LOGFILE"
+      rm -f "$PIDFILE"
+      return 1
+    fi
+    actual="$(grep -oE 'localhost:[0-9]+' "$LOGFILE" 2>/dev/null | head -1 | cut -d: -f2 || true)"
+    [ -n "$actual" ] && break
+    sleep 0.25
+  done
+  actual="${actual:-$port}"
+  echo "$actual" >"$PORTFILE"
+  echo "✓ up  →  http://localhost:$actual/   (pid $pid · ./sammy-pack logs · ./sammy-pack stop)"
+}
+
+cmd_stop() {
+  if ! is_running; then
+    echo "○ not running."
+    rm -f "$PIDFILE" "$PORTFILE"
+    return 0
+  fi
+  local pid; pid="$(cat "$PIDFILE")"
+  echo "Stopping sammy-pack (pid $pid) …"
+  pkill -P "$pid" 2>/dev/null || true   # children (esbuild, etc.)
+  kill "$pid" 2>/dev/null || true
+  local i
+  for i in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PIDFILE" "$PORTFILE"
+  echo "✓ stopped."
+}
+
+cmd_status() {
+  if is_running; then
+    echo "● running (pid $(cat "$PIDFILE"))  →  $(url)"
+  else
+    echo "○ stopped"
+  fi
+}
+
+cmd_logs() {
+  [ -f "$LOGFILE" ] || { echo "no log yet — start the server first."; return 0; }
+  tail -n "${1:-40}" -f "$LOGFILE"
+}
+
+case "${1:-}" in
+  start)   shift || true; cmd_start "${1:-}" ;;
+  stop)    cmd_stop ;;
+  restart) shift || true; cmd_stop; cmd_start "${1:-}" ;;
+  status)  cmd_status ;;
+  logs)    shift || true; cmd_logs "${1:-}" ;;
+  *) echo "usage: ./sammy-pack {start [port] | stop | restart [port] | status | logs}"; exit 2 ;;
+esac

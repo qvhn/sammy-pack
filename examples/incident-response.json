@@ -1,0 +1,108 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "incident-response",
+  "description": "Reactive incident handler: a webhook posts an alert, judge-severity routes by stakes, and critical/high incidents get a REVERSIBLE mitigation proposed, gated by judge-risk (auto / human-review / block) before any action runs — then a root-cause follow-up is filed. Mitigate first, fix later. Wire the webhook to your alerting (PagerDuty, Sentry, CloudWatch).",
+  "lifecycle": { "tags": ["reactive", "ops"] },
+  "triggers": [
+    { "kind": "webhook", "path": "incident", "method": "POST" }
+  ],
+  "phases": [
+    {
+      "name": "triage-severity",
+      "description": "Score the incident by impact × blast-radius × reversibility × urgency, then route proportionally.",
+      "route": {
+        "router": "agents/judge-severity.md",
+        "branches": {
+          "critical": {
+            "name": "critical-response",
+            "phases": [
+              {
+                "name": "propose-mitigation",
+                "agent": "agents/mitigation-planner.md",
+                "as": "mitigation",
+                "description": "Fastest reversible action to stop the bleeding — with its rollback."
+              },
+              {
+                "name": "risk-gate",
+                "description": "Decide how much autonomy the mitigation gets: reversible+confident → auto; otherwise human review; unsafe → block.",
+                "route": {
+                  "router": "agents/judge-risk.md",
+                  "branches": {
+                    "auto": {
+                      "name": "auto-mitigate",
+                      "agent": "agents/deploy-adapter.md",
+                      "tools": ["deploy"],
+                      "description": "Apply the reversible mitigation (flag-off / rollback) automatically."
+                    },
+                    "review": {
+                      "name": "approve-mitigation",
+                      "agent": "agents/deploy-adapter.md",
+                      "tools": ["deploy"],
+                      "lock": true,
+                      "description": "Hold for a human to approve before applying the mitigation."
+                    },
+                    "block": {
+                      "name": "escalate-blocked",
+                      "agent": "agents/pm.md",
+                      "description": "Mitigation judged unsafe — escalate to a human, do not run it."
+                    }
+                  },
+                  "default": {
+                    "name": "escalate-unclear",
+                    "agent": "agents/pm.md",
+                    "lock": true
+                  }
+                }
+              },
+              {
+                "name": "file-followup",
+                "agent": "agents/jira-adapter.md",
+                "tools": ["jira"],
+                "description": "Open a root-cause follow-up ticket. Mitigation ≠ fix — the durable fix goes through normal intake."
+              }
+            ]
+          },
+          "high": {
+            "name": "high-response",
+            "phases": [
+              {
+                "name": "propose-mitigation-high",
+                "agent": "agents/mitigation-planner.md",
+                "as": "mitigation"
+              },
+              {
+                "name": "approve-and-mitigate",
+                "agent": "agents/deploy-adapter.md",
+                "tools": ["deploy"],
+                "lock": true,
+                "description": "High severity always gets a human nod before mitigating."
+              },
+              {
+                "name": "file-followup-high",
+                "agent": "agents/jira-adapter.md",
+                "tools": ["jira"]
+              }
+            ]
+          },
+          "medium": {
+            "name": "open-ticket",
+            "agent": "agents/jira-adapter.md",
+            "tools": ["jira"],
+            "description": "Real but limited — file a normal ticket; no mitigation needed."
+          },
+          "low": {
+            "name": "acknowledge",
+            "agent": "agents/writer.md",
+            "description": "Minor/cosmetic — log an acknowledgement and move on."
+          }
+        },
+        "default": {
+          "name": "human-triage",
+          "agent": "agents/pm.md",
+          "lock": true,
+          "description": "Severity unclear — a human decides."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sammy-pack": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/../bin/sammy.js", "mcp"]
+    }
+  }
+}

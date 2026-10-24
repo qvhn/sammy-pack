@@ -1,0 +1,36 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "memory-augmented-run",
+  "description": "Cross-run memory, modeled the sammy-pack way: memory is a SOURCE you read at the start of a run and write at the end, backed by the durable memory store at /api/memory/:key. Wiring: GET /api/memory/<key> → pass its `content` as the `memory` input → run → PUT /api/memory/<key> with the final output (the updated store). memory-reader surfaces only the prior learnings relevant to this task; memory-writer emits the deduped, pruned updated store. This is what makes a system compound — it stops starting cold — and it's the durable home for the calibration/override feedback the reactive flows generate.",
+  "lifecycle": { "tags": ["context"] },
+  "inputs": [
+    {
+      "name": "memory",
+      "kind": "text",
+      "required": false,
+      "description": "The durable memory store from prior runs (learnings, decisions, known issues, corrections). Empty on the first run. Wire it from a file / DB / Notion / any source; the final phase emits the updated store to persist back."
+    }
+  ],
+  "phases": [
+    {
+      "name": "recall",
+      "agent": "agents/memory-reader.md",
+      "as": "recalled",
+      "description": "Read memory at the start — surface ONLY the prior learnings relevant to this task (scoped recall, not the whole store).",
+      "prompt": "Surface the prior learnings relevant to this task. Flag anything that conflicts with the task as stated.\n\nTASK:\n${input}\n\nMEMORY STORE:\n${memory}"
+    },
+    {
+      "name": "work",
+      "agent": "agents/dev-lead.md",
+      "as": "outcome",
+      "description": "Do the task, informed by hindsight rather than starting cold.",
+      "prompt": "Carry out the task, applying what we learned before where it helps.\n\nTASK:\n${input}\n\nRELEVANT PRIOR LEARNINGS:\n${recalled}"
+    },
+    {
+      "name": "persist",
+      "agent": "agents/memory-writer.md",
+      "description": "Write back at the end — emit the UPDATED memory store (append any durable lesson, dedupe, prune stale). Persist this output to your memory source so the NEXT run starts warmer.",
+      "prompt": "Emit the updated memory store: append any durable, reusable lesson from this run, dedupe against existing entries, and prune anything stale. Output the full updated store.\n\nEXISTING MEMORY:\n${memory}\n\nTHIS RUN'S OUTCOME:\n${outcome}"
+    }
+  ]
+}

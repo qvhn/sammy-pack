@@ -1,0 +1,69 @@
+# examples/.gitignore
+#
+# ALLOWLIST. Everything here is ignored by default; only the generic example
+# orchestrations shipped with sammy-pack are un-ignored below. Domain-specific
+# orchestrations (imported per consumer app) are excluded automatically so a
+# stray `git add -A` cannot commit them to the public repo.
+# To ship a NEW generic example, add an explicit `!name.json`.
+
+*
+!.gitignore
+!TEMPLATE.json
+!TEMPLATE.md
+!architect-engineers-reviewer.json
+!blast-radius-classify.json
+!bug-report-funnel.json
+!bug-triage-fix.json
+!ci-flake-detector.json
+!company-operating-system.json
+!completeness-classify.json
+!compose-pipeline.json
+!content-review-board.json
+!context-aware-triage.json
+!context-compaction.json
+!convergence-classify.json
+!correctness-classify.json
+!cross-functional-review.json
+!customer-signal-router.json
+!decision-tree.json
+!defect-to-pr.json
+!demo-linear-3.json
+!deploy-fanout-qa.json
+!doc-generation.json
+!durable-wait-demo.json
+!eval-pipeline.json
+!fanout-summarize.json
+!federated-loopback.json
+!federated-research.json
+!finance-invoice-approval.json
+!flake-classify.json
+!hr-candidate-screening.json
+!implement-fix.json
+!incident-response.json
+!iterative-refinement-scored.json
+!legal-contract-review.json
+!marketing-campaign.json
+!memory-augmented-run.json
+!multi-agent-dialog.json
+!nightly-eval-gate.json
+!parallel-research-then-build.json
+!parameterized-review.json
+!persona-fan-out.json
+!production-rag.json
+!refinement-loop.json
+!release-pipeline.json
+!release-readiness-classify.json
+!sales-lead-to-close.json
+!score-gate-rollout.json
+!security-watch.json
+!severity-classify.json
+!smoke-test.json
+!idea-to-prototype.json
+!sprint-delivery.json
+!support-ticket-resolution.json
+!switch-case.json
+!ticket-to-pr.json
+!ticket-triage.json
+!scenario-coverage-convergence.json
+!intake-demo.json
+!worktree-test-demo.json

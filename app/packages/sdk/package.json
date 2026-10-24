@@ -1,0 +1,51 @@
+{
+  "name": "@sammy-pack/sdk",
+  "version": "0.1.0-alpha.0",
+  "description": "The small, stable public contract for building sammy-pack queue-source adapters and other integrations. Ships the queue-source narrow-waist contract (QueueSource, SourceMessage, DeliveryResult, makeHttpDeliver/httpDeliver) and the client-side trigger signer \u2014 with no broker SDK and no runtime dependency beyond node builtins. Third-party adapters depend on this, never on the engine.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "prepare": "tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "sammy-pack",
+    "sdk",
+    "queue",
+    "adapter",
+    "broker",
+    "contract",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qvhn/sammy-pack.git",
+    "directory": "app/packages/sdk"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0"
+  },
+  "bugs": {
+    "url": "https://github.com/qvhn/sammy-pack/issues"
+  },
+  "homepage": "https://github.com/qvhn/sammy-pack#readme"
+}

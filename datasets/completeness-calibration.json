@@ -1,0 +1,152 @@
+{
+  "name": "completeness-calibration",
+  "description": "Labeled CRITERIA/OUTPUT pairs for calibrating judge-completeness. Each row enumerates required items in CRITERIA and an OUTPUT that covers all of them, exactly half, or none — so the objectively correct coverage fraction is one of the judge's documented anchor scores (1.0/0.5/0.0), which is the expectedOutput. Traps included: terse-but-complete outputs, long-but-half outputs (depth ≠ completeness), placeholder filler that doesn't count as coverage, and eloquent outputs that address nothing asked. Run via the completeness-calibration eval (exact scorer).",
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000,
+  "rows": [
+    {
+      "id": "comp-1",
+      "input": "CRITERIA: The postmortem must include four sections: summary, root cause, customer impact, and action items.\nOUTPUT: Summary: checkout was down 41 minutes. Root cause: an expired TLS cert on the payment gateway. Customer impact: roughly 3,100 failed checkouts. Action items: automate cert rotation; add expiry alerting.",
+      "expectedOutput": "1.0",
+      "tags": ["terse", "borderline"]
+    },
+    {
+      "id": "comp-2",
+      "input": "CRITERIA: Release notes must cover new features, bug fixes, and breaking changes.\nOUTPUT: This release adds saved filters and a duplicate-detection pass (new features) and fixes the timezone bug in scheduled reports (bug fix). There are no breaking changes — verified against the public API surface.",
+      "expectedOutput": "1.0",
+      "tags": ["explicit-none", "borderline"]
+    },
+    {
+      "id": "comp-3",
+      "input": "CRITERIA: Meeting notes must capture decisions made, action items with owners, and the next meeting date.\nOUTPUT: Decisions: adopt the new on-call rotation. Action items: Maya updates the runbook; Tom configures the pager schedule. Next meeting: June 18.",
+      "expectedOutput": "1.0",
+      "tags": ["coverage"]
+    },
+    {
+      "id": "comp-4",
+      "input": "CRITERIA: The endpoint doc must include the path, the HTTP method, the request parameters, and an example response.\nOUTPUT: POST /v1/exports. Parameters: format (csv or json) and range (ISO start/end dates). Example response: {\"id\": \"exp_123\", \"status\": \"queued\"}.",
+      "expectedOutput": "1.0",
+      "tags": ["coverage"]
+    },
+    {
+      "id": "comp-5",
+      "input": "CRITERIA: The support reply must acknowledge the reported issue, provide a workaround, and give an ETA for the fix.\nOUTPUT: You're right that bulk archive fails on folders over 500 items — sorry about that. As a workaround, archive in batches of 200. A fix is scheduled for next Tuesday's release.",
+      "expectedOutput": "1.0",
+      "tags": ["coverage"]
+    },
+    {
+      "id": "comp-6",
+      "input": "CRITERIA: The bug report must contain steps to reproduce, expected vs. actual behavior, and the environment.\nOUTPUT: Seen on Firefox 126 on macOS. Expected the draft to persist after reload; actually it disappears. To reproduce: open the editor, type a paragraph, reload the tab within 5 seconds.",
+      "expectedOutput": "1.0",
+      "tags": ["unordered"]
+    },
+    {
+      "id": "comp-7",
+      "input": "CRITERIA: The onboarding email must contain the login link, the trial length, and the support contact.\nOUTPUT: Welcome aboard! We're thrilled to have you. Log in at app.example.com/login to get started. Your trial runs 14 days. Questions? Write support@example.com any time. PS: our community forum is worth a look too.",
+      "expectedOutput": "1.0",
+      "tags": ["extra"]
+    },
+    {
+      "id": "comp-8",
+      "input": "CRITERIA: The security advisory must state the affected versions, the severity, the patched version, and a mitigation for users who cannot upgrade.\nOUTPUT: Affects 4.0.0 through 4.2.1. Severity: high. Patched in 4.2.2. If you cannot upgrade, disable the /import endpoint via the IMPORTS_ENABLED env var.",
+      "expectedOutput": "1.0",
+      "tags": ["coverage"]
+    },
+    {
+      "id": "comp-9",
+      "input": "CRITERIA: The postmortem must include four sections: summary, root cause, customer impact, and action items.\nOUTPUT: Summary: the report scheduler was stuck for 3 hours. Root cause: a poisoned message wedged the queue consumer.",
+      "expectedOutput": "0.5",
+      "tags": ["half"]
+    },
+    {
+      "id": "comp-10",
+      "input": "CRITERIA: The postmortem must include four sections: summary, root cause, customer impact, and action items.\nOUTPUT: Summary: search indexing lagged 6 hours behind writes. Root cause: a misconfigured batch size after the infra migration. Customer impact: TBD. Action items: N/A.",
+      "expectedOutput": "0.5",
+      "tags": ["placeholder", "borderline"]
+    },
+    {
+      "id": "comp-11",
+      "input": "CRITERIA: The support reply must provide a workaround and an ETA for the fix.\nOUTPUT: As a workaround, export each project individually instead of using bulk export.",
+      "expectedOutput": "0.5",
+      "tags": ["half"]
+    },
+    {
+      "id": "comp-12",
+      "input": "CRITERIA: The design review must address four areas: API shape, data model, error handling, and rollout plan.\nOUTPUT: The API shape follows our REST conventions: resources are nouns versioned under /v2, cursor pagination throughout, idempotency keys on every mutation, and consistent envelope fields — each choice weighed against the alternatives in detail. The data model adds two tables, orders and order_events, linked by a foreign key with an index on (account_id, created_at); the migration is additive and the backfill is chunked to avoid lock contention.",
+      "expectedOutput": "0.5",
+      "tags": ["depth-trap", "borderline"]
+    },
+    {
+      "id": "comp-13",
+      "input": "CRITERIA: Meeting notes must capture the decisions made and the action items with owners.\nOUTPUT: Decisions: ship the pricing page redesign behind a flag; defer the annual-billing experiment to Q3.",
+      "expectedOutput": "0.5",
+      "tags": ["half"]
+    },
+    {
+      "id": "comp-14",
+      "input": "CRITERIA: The endpoint doc must include the path, the HTTP method, the request parameters, and an example response.\nOUTPUT: GET /v1/webhooks. Lists the webhook subscriptions for the workspace.",
+      "expectedOutput": "0.5",
+      "tags": ["half"]
+    },
+    {
+      "id": "comp-15",
+      "input": "CRITERIA: The security advisory must state the affected versions and a mitigation.\nOUTPUT: Affects 2.1.0 through 2.3.4. Mitigation: see the internal wiki.",
+      "expectedOutput": "0.5",
+      "tags": ["placeholder", "borderline"]
+    },
+    {
+      "id": "comp-16",
+      "input": "CRITERIA: The QA sweep report must cover four surfaces: signup, checkout, search, and notifications.\nOUTPUT: Signup: all 12 cases green, including the SSO path. Checkout: green except one cosmetic misalignment, logged separately. The team plans to look at the remaining surfaces when capacity allows.",
+      "expectedOutput": "0.5",
+      "tags": ["half", "borderline"]
+    },
+    {
+      "id": "comp-17",
+      "input": "CRITERIA: The postmortem must include a summary, root cause, customer impact, and action items.\nOUTPUT:",
+      "expectedOutput": "0.0",
+      "tags": ["empty"]
+    },
+    {
+      "id": "comp-18",
+      "input": "CRITERIA: The support reply must provide a workaround and an ETA for the fix.\nOUTPUT: Thanks for flagging this — I'll get back to you soon.",
+      "expectedOutput": "0.0",
+      "tags": ["non-answer"]
+    },
+    {
+      "id": "comp-19",
+      "input": "CRITERIA: The postmortem must include the root cause, the customer impact, and the action items for the May 12 outage.\nOUTPUT: Reliability is a core value for our team. Over the past year we have invested heavily in observability, on-call health, and chaos testing, and we remain committed to learning from every incident. We appreciate our customers' patience and trust.",
+      "expectedOutput": "0.0",
+      "tags": ["off-topic", "borderline"]
+    },
+    {
+      "id": "comp-20",
+      "input": "CRITERIA: The handoff doc must state the current deploy status, the open risks, and the pending approvals.\nOUTPUT: Deploy status: ? Open risks: ? Pending approvals: ?",
+      "expectedOutput": "0.0",
+      "tags": ["placeholder"]
+    },
+    {
+      "id": "comp-21",
+      "input": "CRITERIA: Release notes for v4.2 must cover its new features, bug fixes, and breaking changes.\nOUTPUT: Looking ahead to the second half of the year, the roadmap focuses on workspace templates, a plugin API, and deeper audit logging. Stay tuned for dates.",
+      "expectedOutput": "0.0",
+      "tags": ["off-topic"]
+    },
+    {
+      "id": "comp-22",
+      "input": "CRITERIA: The incident update must state what failed, who is affected, and when the next update will be posted.\nOUTPUT: We sincerely apologize for the disruption and thank you for your patience while we work through this.",
+      "expectedOutput": "0.0",
+      "tags": ["non-answer"]
+    },
+    {
+      "id": "comp-23",
+      "input": "CRITERIA: The migration guide must include the upgrade steps and a rollback plan.\nOUTPUT: Upgrade steps: see the wiki. Rollback: ask in #platform.",
+      "expectedOutput": "0.0",
+      "tags": ["placeholder", "borderline"]
+    },
+    {
+      "id": "comp-24",
+      "input": "CRITERIA: The bug report must contain steps to reproduce, expected vs. actual behavior, and the environment.\nOUTPUT: The new editor is generally excellent — fast, beautiful, and a joy to use. The team has clearly put care into the typography and the autosave experience.",
+      "expectedOutput": "0.0",
+      "tags": ["off-topic"]
+    }
+  ]
+}

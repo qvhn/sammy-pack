@@ -1,0 +1,46 @@
+{
+  "name": "demo-linear-3",
+  "description": "Three linear phases — a layout/demo orchestration. Uses no-LLM code phases so it's valid and cheap to run.",
+  "lifecycle": { "tags": ["starter"] },
+  "phases": [
+    {
+      "name": "phase-1",
+      "code": {
+        "source": "return input || 'phase-1'"
+      }
+    },
+    {
+      "name": "phase-2",
+      "code": {
+        "source": "return input + ' -> phase-2'"
+      }
+    },
+    {
+      "name": "phase-3",
+      "code": {
+        "source": "return input + ' -> phase-3'"
+      }
+    }
+  ],
+  "_layout": {
+    "phase-1": [
+      320,
+      60
+    ],
+    "phase-2": [
+      320,
+      280
+    ],
+    "phase-3": [
+      320,
+      500
+    ]
+  },
+  "triggers": [
+    {
+      "kind": "webhook",
+      "path": "test",
+      "method": "GET"
+    }
+  ]
+}

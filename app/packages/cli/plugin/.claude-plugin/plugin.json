@@ -1,0 +1,7 @@
+{
+  "name": "sammy-pack",
+  "description": "Run JSON-defined multi-agent orchestrations from Claude Code. Ships the orchestration-runner skill, a library of generic agents, and an MCP server that embeds the engine and shares the web dashboard's run store (list/start/get/cancel/resume runs).",
+  "version": "0.1.0-alpha.0",
+  "license": "MIT",
+  "repository": "qvhn/sammy-pack"
+}

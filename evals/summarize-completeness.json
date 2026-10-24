@@ -1,0 +1,15 @@
+{
+  "name": "summarize-completeness",
+  "description": "Quickstart eval: run the fanout-summarize pipeline against the quickstart-summarize dataset, score each row's summary for completeness against the expected one-sentence target.",
+  "orchestrationName": "fanout-summarize",
+  "datasetName": "quickstart-summarize",
+  "scorers": [
+    {
+      "type": "llm-judge",
+      "judgeAgent": "agents/judge-completeness.md",
+      "criteria": "Does the OUTPUT cover the same facts as EXPECTED? A perfect summary will mention every concrete claim (numbers, names, conditions, dates) that EXPECTED includes. Missing one concrete claim = 0.5; missing two or more = 0.0."
+    }
+  ],
+  "createdAt": 1779100000000,
+  "updatedAt": 1779100000000
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "context-aware-triage",
+  "description": "Retrieval-augmented triage — context engineering in miniature. A retriever first pulls the known issues most similar to the incoming report and frames a triage packet; judge-triage then classifies WITH that retrieved context in view, so the duplicate branch actually works (a triage judge can't call something a duplicate it was never shown). The fix for the dedup gap: give the judge the right context, not all the context.",
+  "lifecycle": { "tags": ["context", "triage"] },
+  "inputs": [
+    {
+      "name": "knownIssues",
+      "kind": "text",
+      "required": false,
+      "description": "Corpus of existing/known issues to dedup against. Paste a list, or wire it from a source (Jira search, an issues export). Empty = no corpus, every novel report reads as actionable."
+    }
+  ],
+  "phases": [
+    {
+      "name": "retrieve-related",
+      "agent": "agents/retriever.md",
+      "description": "Scoped retrieval + framing: surface only the known issues similar to this report, and frame a packet the judge can act on. Combines retrieve+frame in one pass so the route's input carries both the report and its candidates.",
+      "prompt": "Frame a triage packet for duplicate detection. Output TWO clearly-headed sections, verbatim:\nfirst `=== INCOMING REPORT ===` with the report below it,\nthen `=== RELATED KNOWN ISSUES (retrieved) ===` with the entries from the corpus most similar to the report (or `none found`).\n\nREPORT:\n${input}\n\nKNOWN ISSUES CORPUS:\n${knownIssues}"
+    },
+    {
+      "name": "triage",
+      "description": "Classify with the retrieved context in view — duplicate detection now has something to match against.",
+      "route": {
+        "router": "agents/judge-triage.md",
+        "branches": {
+          "actionable": {
+            "name": "open-ticket",
+            "agent": "agents/jira-adapter.md",
+            "tools": ["jira"],
+            "description": "Novel + real (no strong match in the retrieved issues) → file a ticket."
+          },
+          "duplicate": {
+            "name": "link-duplicate",
+            "agent": "agents/writer.md",
+            "description": "Matches a retrieved known issue → link to it and acknowledge, no new ticket."
+          },
+          "noise": {
+            "name": "record-noise",
+            "code": {
+              "source": "return 'Recorded as not-a-bug (noise/working-as-designed). No action taken.'"
+            }
+          },
+          "needs-info": {
+            "name": "ask-for-info",
+            "agent": "agents/writer.md",
+            "description": "Plausible but too vague — request repro steps and specifics."
+          }
+        },
+        "default": {
+          "name": "human-triage",
+          "agent": "agents/pm.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

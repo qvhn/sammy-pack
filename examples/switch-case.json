@@ -1,0 +1,25 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "switch-case",
+  "description": "Deterministic value-based branching. A classifier phase emits a discrete verdict (approve / revise / reject) and the `switch` runs the exactly-matching case, with `default` as the catch-all. Use this when a phase (a script or agent) returns true/false or x/y/z and cases should fire off that value — distinct from `route`, which can use an LLM router or loose substring matching.",
+  "lifecycle": { "tags": ["starter", "branching"] },
+  "phases": [
+    {
+      "name": "classify",
+      "agent": "agents/router.md",
+      "as": "verdict",
+      "prompt": "Reply with EXACTLY one word — approve, revise, or reject — for this change request.\n\nREQUEST:\n${input}"
+    },
+    {
+      "name": "act-on-verdict",
+      "switch": {
+        "on": "${verdict}",
+        "cases": {
+          "approve": { "name": "ship", "agent": "agents/dev.md" },
+          "revise": { "name": "revise-plan", "agent": "agents/dev-lead.md" }
+        },
+        "default": { "name": "hold-and-escalate", "agent": "agents/dev-lead.md" }
+      }
+    }
+  ]
+}

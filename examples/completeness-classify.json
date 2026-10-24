@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "completeness-classify",
+  "description": "Calibration harness orchestration: routes a CRITERIA/OUTPUT pair through judge-completeness and emits the CHOSEN score as its output (each branch is a code node returning its own name). The judge replies with a coverage fraction; this harness calibrates against its three documented anchor scores (1.0 = everything covered, 0.5 = half covered, 0.0 = nothing covered), so dataset rows are engineered to land exactly on an anchor. Pair with datasets/completeness-calibration.json + evals/completeness-calibration.json.",
+  "lifecycle": { "tags": ["judge", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-completeness.md",
+        "branches": {
+          "1.0": { "name": "is-complete", "code": { "source": "return '1.0'" } },
+          "0.5": { "name": "is-half", "code": { "source": "return '0.5'" } },
+          "0.0": { "name": "is-none", "code": { "source": "return '0.0'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "severity-classify",
+  "description": "Calibration harness orchestration: routes an incident through judge-severity and emits the CHOSEN severity as its output (each branch is a code node returning its own name). That makes the judge eval-able — an eval with an `exact` scorer measures the judge's ROUTING ACCURACY against labeled incidents. Pair with datasets/severity-calibration.json + evals/severity-calibration.json. This is the pattern for calibrating any router/judge: wrap it so the output IS the decision.",
+  "lifecycle": { "tags": ["judge", "triage", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-severity.md",
+        "branches": {
+          "critical": { "name": "is-critical", "code": { "source": "return 'critical'" } },
+          "high": { "name": "is-high", "code": { "source": "return 'high'" } },
+          "medium": { "name": "is-medium", "code": { "source": "return 'medium'" } },
+          "low": { "name": "is-low", "code": { "source": "return 'low'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

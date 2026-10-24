@@ -1,0 +1,88 @@
+# agents/.gitignore
+#
+# ALLOWLIST. Everything in this directory is ignored by default; only the
+# generic templates shipped with sammy-pack are un-ignored below. Any agent
+# set imported from a consumer app (domain-specific, per-machine, per-dev) is
+# excluded automatically — so a stray `git add -A` can never commit it to the
+# public repo. To ship a NEW generic template, add an explicit `!name.md`.
+#
+# Same principle as credentials.json: ship templates, not imported artifacts.
+# See agents/README.md for the per-machine import workflow.
+
+*
+!.gitignore
+!README.md
+!account-exec.md
+!agent-designer.md
+!brand-reviewer.md
+!chief-of-staff.md
+!chunker.md
+!code-scout.md
+!compliance-officer.md
+!context-compactor.md
+!controller.md
+!critic.md
+!critique.md
+!customer-success.md
+!data-analyst.md
+!dataset-row-designer.md
+!dead-letter-recorder.md
+!deploy-adapter.md
+!dev-lead.md
+!dev.md
+!digest-writer.md
+!embedder.md
+!environment-adapter.md
+!escalate.md
+!figma-scout.md
+!financial-analyst.md
+!github-adapter.md
+!hiring-manager.md
+!ingestion-reporter.md
+!jira-adapter.md
+!jira-scout.md
+!judge-blast-radius.md
+!judge-completeness.md
+!judge-convergence.md
+!judge-correctness.md
+!judge-flake.md
+!judge-format.md
+!judge-release-readiness.md
+!judge-reproducibility.md
+!judge-risk.md
+!judge-severity.md
+!judge-tone.md
+!judge-triage.md
+!legal-counsel.md
+!linear-adapter.md
+!marketing-strategist.md
+!memory-reader.md
+!memory-writer.md
+!mitigation-planner.md
+!notion-adapter.md
+!orchestration-designer.md
+!orchestration-explainer.md
+!orchestration-improver.md
+!pm.md
+!prompt-refiner.md
+!qa-runner.md
+!recruiter.md
+!research-synthesizer.md
+!retriever.md
+!review.md
+!router.md
+!scorer-suggester.md
+!sdr.md
+!slack-adapter.md
+!source-fetcher.md
+!summarizer.md
+!support-agent.md
+!support-lead.md
+!ui-qa.md
+!unit-qa.md
+!uxui.md
+!vector-writer.md
+!writer.md
+!scenario-stub-author.md
+!suite-converger.md
+!coverage-triager.md

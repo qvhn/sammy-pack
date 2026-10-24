@@ -1,0 +1,89 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "bug-report-funnel",
+  "description": "Probabilistic intake funnel: a webhook delivers a user bug report, judge-triage filters real/dup/noise/needs-info (the highest-leverage gate), then actionable reports are scoped, reproduced (confirm before you build), and only CONFIRMED defects mint a ticket — unreproducible ones go back for info, never silently closed. Each transition is a confidence gate.",
+  "lifecycle": { "tags": ["reactive", "qa", "triage"] },
+  "triggers": [
+    { "kind": "webhook", "path": "bug-report", "method": "POST" }
+  ],
+  "phases": [
+    {
+      "name": "triage",
+      "description": "Front door: is this a real, novel, actionable defect — or a dup / noise / too-vague?",
+      "route": {
+        "router": "agents/judge-triage.md",
+        "branches": {
+          "actionable": {
+            "name": "qualify",
+            "phases": [
+              {
+                "name": "scope-blast-radius",
+                "agent": "agents/judge-blast-radius.md",
+                "as": "scope",
+                "description": "Estimate how far the defect's effects reach, to scope reproduction + later QA."
+              },
+              {
+                "name": "reproduce",
+                "agent": "agents/qa-runner.md",
+                "as": "repro",
+                "description": "Try to reproduce the reported behavior before spending fix effort."
+              },
+              {
+                "name": "confirm-gate",
+                "description": "Did QA actually reproduce it? Only confirmed defects proceed to a ticket.",
+                "route": {
+                  "router": "agents/judge-reproducibility.md",
+                  "branches": {
+                    "confirmed": {
+                      "name": "mint-ticket",
+                      "agent": "agents/jira-adapter.md",
+                      "tools": ["jira"],
+                      "description": "Confirmed defect → file a ticket. Emit a `<repo>.bug.confirmed` event to chain ticket-to-pr."
+                    },
+                    "cannot-reproduce": {
+                      "name": "request-steps",
+                      "agent": "agents/writer.md",
+                      "description": "Could not reproduce — ask the reporter for steps/context. Do NOT close silently."
+                    },
+                    "inconclusive": {
+                      "name": "human-repro",
+                      "agent": "agents/pm.md",
+                      "lock": true,
+                      "description": "Ambiguous reproduction — a human decides."
+                    }
+                  },
+                  "default": {
+                    "name": "human-repro-default",
+                    "agent": "agents/pm.md",
+                    "lock": true
+                  }
+                }
+              }
+            ]
+          },
+          "duplicate": {
+            "name": "link-duplicate",
+            "agent": "agents/writer.md",
+            "description": "Link to the existing issue and acknowledge the reporter."
+          },
+          "noise": {
+            "name": "record-noise",
+            "code": {
+              "source": "return 'Recorded as not-a-bug (noise/working-as-designed). No action taken.'"
+            }
+          },
+          "needs-info": {
+            "name": "ask-for-info",
+            "agent": "agents/writer.md",
+            "description": "Plausible but too vague — request repro steps and specifics."
+          }
+        },
+        "default": {
+          "name": "human-triage",
+          "agent": "agents/pm.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

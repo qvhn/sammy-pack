@@ -1,0 +1,59 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "production-rag",
+  "description": "Production-grade RAG ingestion: map over docs, per-step timeout + retry, full-pipeline budget, onError fallback if any single doc breaks the embedder. Showcases combining decorators.",
+  "lifecycle": { "tags": ["research", "rag"] },
+  "phases": [
+    {
+      "name": "fetch-docs",
+      "agent": "agents/source-fetcher.md",
+      "tools": ["github"],
+      "as": "docs",
+      "description": "Should produce a JSON array of {id, source, content}."
+    },
+    {
+      "name": "ingest",
+      "map": {
+        "over": "${docs}",
+        "body": {
+          "name": "ingest-one",
+          "phases": [
+            {
+              "name": "chunk",
+              "agent": "agents/chunker.md",
+              "as": "chunks",
+              "timeout": 10
+            },
+            {
+              "name": "embed",
+              "agent": "agents/embedder.md",
+              "tools": ["openai-embeddings"],
+              "timeout": 30,
+              "retry": {
+                "times": 3,
+                "backoff": "exponential",
+                "initialMs": 500
+              },
+              "onError": {
+                "name": "skip-doc",
+                "agent": "agents/dead-letter-recorder.md",
+                "description": "Log ${error.message} and the doc id; let the pipeline continue."
+              }
+            },
+            {
+              "name": "upsert",
+              "agent": "agents/vector-writer.md",
+              "tools": ["pinecone"]
+            }
+          ]
+        },
+        "serial": false
+      },
+      "budget": { "maxCostUsd": 25.0, "maxTokens": 5000000 }
+    },
+    {
+      "name": "report",
+      "agent": "agents/ingestion-reporter.md"
+    }
+  ]
+}

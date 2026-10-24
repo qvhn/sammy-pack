@@ -1,0 +1,57 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "deploy-fanout-qa",
+  "description": "Deployment-gate orchestration: when a deploy lands, judge-blast-radius scopes what to re-test, QA fans out across the affected components in parallel (map), and judge-release-readiness renders a ship/hold verdict — green records and proceeds, any red holds for a human. Read-only: it validates and decides, it does not edit code.",
+  "lifecycle": { "tags": ["qa", "fan-out"] },
+  "triggers": [
+    { "kind": "deployment", "environment": "staging" }
+  ],
+  "phases": [
+    {
+      "name": "scope",
+      "agent": "agents/judge-blast-radius.md",
+      "as": "scope",
+      "description": "What did this deploy touch, and how far do its effects reach? Determines re-test breadth."
+    },
+    {
+      "name": "fan-out-qa",
+      "description": "Run QA across the affected components in parallel, capped to a pool of 3 (sims/test workers) via map concurrency. In production `over` would be ${scope.components}; this demo uses an inline component set so it runs out of the box.",
+      "map": {
+        "over": "[\"auth\", \"billing\", \"notifications\", \"profile\"]",
+        "concurrency": 3,
+        "body": {
+          "name": "qa-component",
+          "agent": "agents/qa-runner.md",
+          "prompt": "Run QA for the '${item}' component against the new build. You are the validator for this one component — exercise it with the tools you have (or do a static check and say so), then return a PASS/FAIL verdict with concrete evidence scoped to '${item}'. Do NOT try to load or hand off to a per-component skill/sub-suite — run the check yourself.",
+          "description": "Validate component '${item}' against expected behavior on the new build (generic qa-runner; per-component agent path could be substituted via the interpolated `agent` field — e.g. agents/${item}-qa-suite.md — when such agents exist)."
+        }
+      },
+      "as": "qaResults"
+    },
+    {
+      "name": "readiness-gate",
+      "description": "Aggregate the QA results into a go/no-go verdict.",
+      "route": {
+        "router": "agents/judge-release-readiness.md",
+        "branches": {
+          "ship": {
+            "name": "record-green",
+            "agent": "agents/summarizer.md",
+            "description": "All green — record the readiness report; the deploy stands."
+          },
+          "hold": {
+            "name": "hold-for-human",
+            "agent": "agents/pm.md",
+            "lock": true,
+            "description": "A red/flaky/uncovered result — hold and let a human decide on rollback."
+          }
+        },
+        "default": {
+          "name": "hold-default",
+          "agent": "agents/pm.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

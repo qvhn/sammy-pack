@@ -1,0 +1,26 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "iterative-refinement-scored",
+  "description": "Refinement loop with a NUMERIC quality judge — exits as soon as the score crosses `stopAtScore`, not at a fixed iteration count. Demonstrates the score-based judge protocol: the judge replies with a 0-1 quality score (a literal STOP still forces exit). Use when 'good enough' is meaningful and you want the loop to stop early when the output's already there, rather than burn the full iteration budget.",
+  "lifecycle": { "tags": ["loop", "judge", "evals"] },
+  "phases": [
+    {
+      "name": "first-pass",
+      "agent": "agents/writer.md",
+      "prompt": "First pass — get something on the page that addresses the request, even if rough:\n\n${input}"
+    },
+    {
+      "name": "refine",
+      "loop": {
+        "body": {
+          "name": "rewrite",
+          "agent": "agents/writer.md",
+          "prompt": "Improve this draft. Tighten language, fix structure, fill gaps:\n\n${input}"
+        },
+        "judge": "agents/judge-completeness.md",
+        "stopAtScore": 0.9,
+        "maxIterations": 5
+      }
+    }
+  ]
+}

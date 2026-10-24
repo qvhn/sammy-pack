@@ -1,0 +1,11 @@
+{
+  "name": "severity-calibration",
+  "description": "Calibration eval for judge-severity. Runs severity-classify against the labeled severity-calibration dataset and scores the emitted severity EXACTLY against the human label. Pass rate = routing accuracy; the per-row drilldown shows exactly which incidents the judge mis-ranks (and in which direction — inflating vs. deflating), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start. This is the template for calibrating any judge: an exact scorer over a labeled branch.",
+  "orchestrationName": "severity-classify",
+  "datasetName": "severity-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781000000000,
+  "updatedAt": 1781000000000
+}

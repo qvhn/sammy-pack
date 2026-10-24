@@ -1,0 +1,36 @@
+# Normalize line endings so the repo behaves the same on macOS, Linux,
+# and Windows. Text files are stored as LF in git and checked out as LF
+# everywhere (keeps Node shebang scripts like packages/cli/bin/sammy.js
+# working on Windows). Windows-only script formats keep CRLF, and known
+# binaries are marked so git never touches their bytes.
+
+* text=auto eol=lf
+
+# Windows batch / PowerShell scripts must stay CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Explicit text types (clarity)
+*.ts    text
+*.tsx   text
+*.js    text
+*.jsx   text
+*.json  text
+*.md    text
+*.sh    text eol=lf
+
+# Binaries — never normalize
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.webp     binary
+*.pdf      binary
+*.keystore binary
+*.jar      binary
+*.ttf      binary
+*.otf      binary
+*.woff     binary
+*.woff2    binary

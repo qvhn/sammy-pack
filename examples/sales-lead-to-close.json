@@ -1,0 +1,58 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "sales-lead-to-close",
+  "description": "Sales motion: qualify an inbound lead, then ROUTE by deal size to the right play. An SDR runs BANT; a router reads the qualification and sends enterprise deals down a proposal + legal pre-check path, mid-market to a straight proposal, and everything unqualified to a nurture touch. Showcases `route` with per-branch depth (a branch can itself be a multi-phase sequence).",
+  "lifecycle": { "tags": ["business-ops"] },
+  "inputs": [
+    {
+      "name": "lead",
+      "kind": "text",
+      "required": true,
+      "description": "The inbound lead — who they are, their company, and what they asked for (paste the form / email / call notes)."
+    }
+  ],
+  "phases": [
+    {
+      "name": "qualify",
+      "agent": "agents/sdr.md",
+      "as": "qualification",
+      "prompt": "Qualify this inbound lead against BANT and recommend a deal size.\n\nLEAD:\n${lead}"
+    },
+    {
+      "name": "route-by-deal-size",
+      "description": "Enterprise → full proposal + a legal pre-check before it goes out. Mid → straight proposal. Anything unqualified → nurture, not a forced proposal.",
+      "route": {
+        "router": "agents/router.md",
+        "branches": {
+          "enterprise": {
+            "name": "enterprise-play",
+            "phases": [
+              {
+                "name": "enterprise-proposal",
+                "agent": "agents/account-exec.md",
+                "as": "proposal",
+                "prompt": "Build an enterprise proposal for this opportunity. Scope for a larger commit and name what you'd want in return (annual term, reference).\n\nQUALIFICATION:\n${qualification}"
+              },
+              {
+                "name": "legal-pre-check",
+                "agent": "agents/legal-counsel.md",
+                "lock": true,
+                "prompt": "Quick legal pre-check before this enterprise proposal goes out — flag anything in the commercial terms that needs counsel (liability cap, term, data terms). Sign off or list blockers.\n\nPROPOSAL:\n${proposal}"
+              }
+            ]
+          },
+          "mid": {
+            "name": "mid-market-proposal",
+            "agent": "agents/account-exec.md",
+            "prompt": "Build a mid-market proposal — tailored, priced, with a dated next step.\n\nQUALIFICATION:\n${qualification}"
+          }
+        },
+        "default": {
+          "name": "nurture",
+          "agent": "agents/writer.md",
+          "prompt": "This lead isn't sales-ready. Write a short, useful nurture email that gives value (not a pitch) and leaves the door open.\n\nQUALIFICATION:\n${qualification}"
+        }
+      }
+    }
+  ]
+}

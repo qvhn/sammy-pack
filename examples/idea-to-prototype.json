@@ -1,0 +1,41 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "idea-to-prototype",
+  "description": "Idea \u2192 product spec \u2192 UX design \u2192 dev prototype, under a run-wide cost ceiling. The budget circuit-breaker aborts the run if the prototype work blows past the cap \u2014 the point of the example is the cap, not the shape.",
+  "lifecycle": {
+    "tags": [
+      "delivery"
+    ]
+  },
+  "budget": {
+    "maxCostUsd": 5
+  },
+  "phases": [
+    {
+      "name": "spec",
+      "agent": "agents/pm.md",
+      "description": "Turn the raw idea into a crisp product spec."
+    },
+    {
+      "name": "design",
+      "agent": "agents/uxui.md",
+      "description": "Design the UX from the spec."
+    },
+    {
+      "name": "prototype",
+      "agent": "agents/dev.md",
+      "description": "Build a working prototype from the spec + design.",
+      "timeout": 1800,
+      "retry": {
+        "times": 1,
+        "initialMs": 2000
+      }
+    }
+  ],
+  "_layout": {
+    "design": [
+      340,
+      280
+    ]
+  }
+}

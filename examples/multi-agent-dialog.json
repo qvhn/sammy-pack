@@ -1,0 +1,20 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "multi-agent-dialog",
+  "description": "Two-agent debate. The critic and the writer alternate turns over a shared transcript; after 4 rounds the full transcript is the composite's output.",
+  "lifecycle": { "tags": ["starter", "conversation"] },
+  "phases": [
+    {
+      "name": "debate",
+      "conversation": {
+        "participants": ["agents/critic.md", "agents/writer.md"],
+        "rounds": 4
+      }
+    },
+    {
+      "name": "synthesize",
+      "agent": "agents/dev-lead.md",
+      "description": "Read the full debate transcript and produce a final recommendation."
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "name": "severity-calibration",
+  "description": "Labeled incidents for calibrating judge-severity. Each row is an incident description with the human-assigned severity branch (critical/high/medium/low) as expectedOutput. Run via the severity-calibration eval (exact scorer) to measure routing accuracy. Add rows from real triaged incidents to grow the corpus and tighten calibration over time.",
+  "createdAt": 1781000000000,
+  "updatedAt": 1781000000000,
+  "rows": [
+    {
+      "id": "sev-1",
+      "input": "Production database is down. Every request returns a 500 for all users. Started 20 minutes ago and the error rate is still climbing.",
+      "expectedOutput": "critical",
+      "tags": ["outage"]
+    },
+    {
+      "id": "sev-2",
+      "input": "Payment processing is failing for roughly 30% of checkout attempts across all regions; customers are being charged but not receiving confirmation.",
+      "expectedOutput": "critical",
+      "tags": ["money"]
+    },
+    {
+      "id": "sev-3",
+      "input": "A data bug permanently deleted some users' saved drafts after the latest update. The drafts are not recoverable from backups.",
+      "expectedOutput": "critical",
+      "tags": ["data-loss", "irreversible"]
+    },
+    {
+      "id": "sev-4",
+      "input": "Login is broken for users on the latest iOS app version — they cannot access their accounts at all. Android and web are unaffected.",
+      "expectedOutput": "high",
+      "tags": ["auth"]
+    },
+    {
+      "id": "sev-5",
+      "input": "Search returns no results for any query containing an apostrophe or quote. A meaningful slice of searches are affected.",
+      "expectedOutput": "high",
+      "tags": ["feature-broken"]
+    },
+    {
+      "id": "sev-6",
+      "input": "Push notifications are delayed by 10-15 minutes for users in the EU region. They still arrive, just late.",
+      "expectedOutput": "high",
+      "tags": ["degraded"]
+    },
+    {
+      "id": "sev-7",
+      "input": "Profile avatars load slowly on slow networks and occasionally time out, falling back to a placeholder. Retried loads usually succeed.",
+      "expectedOutput": "medium",
+      "tags": ["perf"]
+    },
+    {
+      "id": "sev-8",
+      "input": "Intermittent 502s on one non-critical analytics endpoint, about 1% of calls, and they self-recover on retry. No user-facing feature depends on it.",
+      "expectedOutput": "medium",
+      "tags": ["flaky"]
+    },
+    {
+      "id": "sev-9",
+      "input": "The 'recently viewed' list sometimes shows items in the wrong order until the page is refreshed. Cosmetic ordering only; data is correct.",
+      "expectedOutput": "medium",
+      "tags": ["minor-functional"]
+    },
+    {
+      "id": "sev-10",
+      "input": "There is a typo in the footer: the copyright year reads 2024 instead of 2025.",
+      "expectedOutput": "low",
+      "tags": ["cosmetic"]
+    },
+    {
+      "id": "sev-11",
+      "input": "The 'Export CSV' button is misaligned by a few pixels on Firefox. It works correctly; it's just slightly off-center.",
+      "expectedOutput": "low",
+      "tags": ["cosmetic"]
+    },
+    {
+      "id": "sev-12",
+      "input": "A tooltip on the settings page shows slightly outdated help text referencing an old menu name. No functional impact.",
+      "expectedOutput": "low",
+      "tags": ["copy"]
+    }
+  ]
+}

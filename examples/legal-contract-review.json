@@ -1,0 +1,45 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "legal-contract-review",
+  "description": "Three disciplines read the SAME contract in parallel — compliance/regulatory, legal/liability, and commercial terms — then a synthesizer merges their findings into one redline set, and counsel makes the accountable sign-off (a locked human gate). Showcases `converge` + `merger` for multi-lens review, ending in a `lock` for the call that a human must own.",
+  "lifecycle": { "tags": ["business-ops", "review"] },
+  "inputs": [
+    {
+      "name": "contract",
+      "kind": "file",
+      "required": true,
+      "description": "The contract / MSA / SOW / NDA to review (upload the document)."
+    }
+  ],
+  "phases": [
+    {
+      "name": "review-board",
+      "description": "Same contract, three lenses, run concurrently; summarizer rolls the three reads into one prioritized redline set.",
+      "converge": [
+        {
+          "name": "regulatory",
+          "agent": "agents/compliance-officer.md",
+          "prompt": "Review this contract for COMPLIANCE / regulatory exposure — data terms, privacy, retention, sector rules. Separate obligations from recommendations.\n\nCONTRACT:\n${contract}"
+        },
+        {
+          "name": "liability",
+          "agent": "agents/legal-counsel.md",
+          "prompt": "Review this contract for LIABILITY and unacceptable terms — indemnity, liability cap, IP assignment, termination, auto-renewal. Redline-style, ranked by exposure.\n\nCONTRACT:\n${contract}"
+        },
+        {
+          "name": "commercial",
+          "agent": "agents/financial-analyst.md",
+          "prompt": "Review this contract's COMMERCIAL terms — pricing, payment, escalators, true-ups, penalties. Flag anything that's economically unfavorable or ambiguous.\n\nCONTRACT:\n${contract}"
+        }
+      ],
+      "merger": "agents/summarizer.md",
+      "as": "review"
+    },
+    {
+      "name": "sign-off",
+      "agent": "agents/legal-counsel.md",
+      "lock": true,
+      "prompt": "Make the accountable sign-off call on this contract using the merged review. Verdict: sign-as-is / sign-with-edits / do-not-sign, with the must-have edits.\n\nMERGED REVIEW:\n${review}"
+    }
+  ]
+}

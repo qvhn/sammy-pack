@@ -1,0 +1,11 @@
+{
+  "name": "sammy-pack-self",
+  "description": "Points at the sammy-pack repo itself, useful for dogfooding.",
+  "connection": "github",
+  "repo": "your-org/sammy-pack",
+  "ref": "main",
+  "paths": {
+    "agents": "agents/",
+    "orchestrations": "examples/"
+  }
+}

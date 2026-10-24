@@ -1,0 +1,64 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "bug-triage-fix",
+  "description": "Bug intake → QA reproduces → branch on the outcome. If reproduced: check the tracker — fix straight away when a ticket already exists, else open one first, then run the fix subflow. If NOT reproducible: capture findings and report back. Showcases nested `switch` (deterministic value branching) composed with a `subflow` for the fix.",
+  "lifecycle": { "tags": ["starter", "branching", "engineering"] },
+  "phases": [
+    {
+      "name": "reproduce",
+      "agent": "agents/qa-runner.md",
+      "as": "repro_report",
+      "prompt": "Validate and try to reproduce this bug report. Document the exact steps you took, the environment, and observed vs. expected behavior.\n\nBUG REPORT:\n${input}"
+    },
+    {
+      "name": "assess",
+      "agent": "agents/judge-reproducibility.md",
+      "as": "repro",
+      "prompt": "Given the reproduction attempt below, decide whether the bug reproduces. Reply with EXACTLY one word: reproduced or not-reproduced.\n\nATTEMPT:\n${repro_report}"
+    },
+    {
+      "name": "triage",
+      "switch": {
+        "on": "${repro}",
+        "cases": {
+          "reproduced": {
+            "name": "handle-reproduced",
+            "phases": [
+              {
+                "name": "find-ticket",
+                "agent": "agents/jira-adapter.md",
+                "as": "ticket",
+                "prompt": "Search the tracker for an existing ticket covering this bug. Reply with EXACTLY one word: exists or missing.\n\nBUG:\n${repro_report}"
+              },
+              {
+                "name": "ticket-gate",
+                "switch": {
+                  "on": "${ticket}",
+                  "cases": {
+                    "exists": { "name": "fix-existing", "subflow": "implement-fix" }
+                  },
+                  "default": {
+                    "name": "open-then-fix",
+                    "phases": [
+                      {
+                        "name": "create-ticket",
+                        "agent": "agents/jira-adapter.md",
+                        "prompt": "Create a tracker ticket from this reproduction report — title, description, repro steps, and a severity estimate.\n\nREPORT:\n${repro_report}"
+                      },
+                      { "name": "fix-new", "subflow": "implement-fix" }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "default": {
+          "name": "capture-findings",
+          "agent": "agents/qa-runner.md",
+          "prompt": "This bug did NOT reproduce. Capture findings — what you tried, the environment, relevant logs, and what additional detail would help confirm it — and write a clear report back to the reporter.\n\nORIGINAL REPORT:\n${input}\n\nATTEMPT:\n${repro_report}"
+        }
+      }
+    }
+  ]
+}

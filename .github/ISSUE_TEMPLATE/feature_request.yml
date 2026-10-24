@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a capability or a change to how something works
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that is currently awkward or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What it might look like
+      description: |
+        If it touches the orchestration schema, sketch the JSON. Bear in mind
+        anything committed here stays domain-agnostic (see AGENTS.md), so
+        app-specific bits belong in `vars` or run inputs.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have tried or considered

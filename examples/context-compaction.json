@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "context-compaction",
+  "description": "Mid-flow context compression. Two analyses accumulate a lot of context; a context-compactor distills them into one tight decision brief; the final decision reads ONLY the brief (the raw analyses are deliberately withheld via prompt scoping). The pattern that keeps long orchestrations from drowning later agents in stale context — capture with `as`, compact, then scope the downstream prompt to the digest.",
+  "lifecycle": { "tags": ["context"] },
+  "phases": [
+    {
+      "name": "analyze-usage",
+      "agent": "agents/data-analyst.md",
+      "as": "usage",
+      "description": "First angle — verbose on purpose.",
+      "prompt": "Analyze, in depth, the usage/adoption angle of the following. Be thorough and detailed.\n\n${input}"
+    },
+    {
+      "name": "analyze-risk",
+      "agent": "agents/data-analyst.md",
+      "as": "risk",
+      "description": "Second angle — also verbose, so context accumulates.",
+      "prompt": "Analyze, in depth, the risk / edge-case angle of the following. Be thorough and detailed.\n\n${input}"
+    },
+    {
+      "name": "compact",
+      "agent": "agents/context-compactor.md",
+      "as": "brief",
+      "description": "Distill both analyses into a tight, decision-ready brief — keep the load-bearing facts, drop the verbosity.",
+      "prompt": "Compress these analyses into ONE tight decision brief.\n\n=== USAGE ANALYSIS ===\n${usage}\n\n=== RISK ANALYSIS ===\n${risk}"
+    },
+    {
+      "name": "decide",
+      "agent": "agents/pm.md",
+      "description": "Decide from the BRIEF ALONE — the raw analyses are intentionally NOT in this prompt, keeping the decider's context tight and focused (the whole point of compaction).",
+      "prompt": "Decide the next steps from this brief alone. The raw analyses are deliberately withheld to keep your context focused.\n\nBRIEF:\n${brief}"
+    }
+  ]
+}

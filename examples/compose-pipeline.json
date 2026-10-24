@@ -1,0 +1,25 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "compose-pipeline",
+  "description": "Demonstrates composition: this orchestration nests two existing orchestrations (refinement-loop and decision-tree) as subflows. State is shared, so any ${as} set inside a subflow is readable downstream.",
+  "lifecycle": { "tags": ["starter"] },
+  "phases": [
+    {
+      "name": "decide-what-to-build",
+      "subflow": "decision-tree",
+      "as": "plan",
+      "description": "Run the decision-tree orchestration to triage the incoming ticket; its final output is stored as ${plan}."
+    },
+    {
+      "name": "draft-the-output",
+      "subflow": "refinement-loop",
+      "description": "Run the refinement-loop orchestration to draft + polish based on the plan from the previous subflow. Inherits state, so the inner writer sees ${plan}.",
+      "retry": { "times": 1, "initialMs": 1000 }
+    },
+    {
+      "name": "final-review",
+      "agent": "agents/dev-lead.md",
+      "lock": true
+    }
+  ]
+}

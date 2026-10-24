@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "./dist",
+    "rootDir": "../..",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../src/llm/**/*.ts",
+    "../../src/server/run-store.ts",
+    "../../src/server/run-controller.ts",
+    "../../src/server/budget-store.ts",
+    "../../src/server/sandbox-policy.ts",
+    "../../src/server/a2a-inbound.ts",
+    "../../src/server/otlp-trace.ts",
+    "../../src/lib/**/*.ts",
+    "../../src/types.ts",
+    "../../src/validate.ts",
+    "../../src/interpolate.ts"
+  ],
+  "exclude": [
+    "../../src/server/db.ts",
+    "../../src/server/postgres-store.ts"
+  ]
+}

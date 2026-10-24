@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "defect-to-pr",
+  "description": "Take a defect report through reproduce → fix-and-verify loop → human-gated review. The loop re-runs the fix until QA reports [VERIFIED] or the cap is hit.",
+  "lifecycle": { "tags": ["delivery", "qa"] },
+  "phases": [
+    {
+      "name": "reproduce",
+      "agent": "agents/dev.md",
+      "description": "Reproduce the defect; produce a failing-case description the fix loop can verify against.",
+      "timeout": 600
+    },
+    {
+      "name": "fix-and-verify",
+      "description": "Refine the fix until QA verifies it; at most 4 attempts.",
+      "loop": {
+        "body": {
+          "name": "fix-attempt",
+          "phases": [
+            { "name": "fix", "agent": "agents/dev.md" },
+            { "name": "verify", "agent": "agents/critique.md" }
+          ]
+        },
+        "maxIterations": 4,
+        "until": "[VERIFIED]"
+      }
+    },
+    {
+      "name": "review",
+      "agent": "agents/dev-lead.md",
+      "description": "Lead reviews the verified fix before it becomes a PR.",
+      "lock": true
+    }
+  ]
+}

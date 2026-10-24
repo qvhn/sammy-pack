@@ -1,0 +1,24 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "persona-fan-out",
+  "description": "Same subject, multiple personas, parallel. `map` iterates over a persona list; each iteration drives the same critique agent under a different lens; the synthesizer rolls per-persona feedback into one set of blockers vs nice-to-haves. Use for QA, product copy review, accessibility review — anywhere 'audience' is the variable.",
+  "lifecycle": { "tags": ["qa", "fan-out"] },
+  "phases": [
+    {
+      "name": "personas",
+      "map": {
+        "over": "[\"first-time user\", \"returning power user\", \"accessibility reviewer\"]",
+        "body": {
+          "name": "persona-pass",
+          "agent": "agents/critique.md",
+          "prompt": "You are reviewing as the \"${item}\" persona. Subject under review:\n\n${input}\n\nWhat works for THIS persona, what breaks, what's missing. Stay in character — don't speak for the other personas."
+        }
+      }
+    },
+    {
+      "name": "synthesize",
+      "agent": "agents/summarizer.md",
+      "prompt": "Per-persona feedback:\n\n${input}\n\nSynthesize: BLOCKERS (any persona can't proceed), CONFLICTS (personas disagree), NICE-TO-HAVES (one persona only). Quote the persona for each finding."
+    }
+  ]
+}

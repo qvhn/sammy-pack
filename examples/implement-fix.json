@@ -1,0 +1,30 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "implement-fix",
+  "description": "The fix subflow invoked by bug-triage-fix once a reproducible bug has a ticket: plan the smallest correct change, implement it, verify with a regression test, then review before it ships.",
+  "lifecycle": { "tags": ["engineering"] },
+  "phases": [
+    {
+      "name": "plan",
+      "agent": "agents/dev-lead.md",
+      "as": "plan",
+      "prompt": "Plan the smallest correct fix for this bug. List the files to touch and the regression test that should turn green.\n\nBUG:\n${input}"
+    },
+    {
+      "name": "implement",
+      "agent": "agents/dev.md",
+      "prompt": "Implement the fix exactly per the plan — no unrelated changes.\n\nPLAN:\n${plan}"
+    },
+    {
+      "name": "verify",
+      "agent": "agents/qa-runner.md",
+      "prompt": "Verify the fix resolves the bug and that the regression test passes. Report pass/fail with evidence."
+    },
+    {
+      "name": "review",
+      "agent": "agents/critique.md",
+      "lock": true,
+      "prompt": "Review the change for correctness and regressions before it ships."
+    }
+  ]
+}

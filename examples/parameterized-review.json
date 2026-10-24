@@ -1,0 +1,27 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "parameterized-review",
+  "description": "Parameterization demo: ONE map body dispatches to a DIFFERENT specialist agent per item via `agents/${item}.md`, instead of N near-identical copies. Swap the panel (the `over` list) or wire it from an input to review anything through any set of expert lenses. The same `${...}` interpolation now resolves in agent / agents[] / subflow / route.router / loop.judge paths — so a generic flow can pick its agents (or sub-orchestrations) at runtime.",
+  "lifecycle": { "tags": ["review"] },
+  "phases": [
+    {
+      "name": "panel-review",
+      "description": "Fan out to a panel of specialists chosen BY NAME at runtime — one body, many agents. `agents/${item}.md` resolves to a different agent for each item in `over`.",
+      "map": {
+        "over": "[\"financial-analyst\", \"data-analyst\", \"marketing-strategist\"]",
+        "body": {
+          "name": "review",
+          "agent": "agents/${item}.md",
+          "prompt": "Review the following from your discipline's lens. Be specific and concrete.\n\n${input}"
+        }
+      },
+      "as": "reviews"
+    },
+    {
+      "name": "synthesize",
+      "agent": "agents/summarizer.md",
+      "description": "Pull the panel's reviews together into one assessment.",
+      "prompt": "Synthesize these expert reviews into one balanced assessment — the key agreements and the tensions.\n\n${reviews}"
+    }
+  ]
+}

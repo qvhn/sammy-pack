@@ -1,0 +1,19 @@
+{
+  "name": "smoke-test",
+  "description": "No-LLM smoke test using code phases (pure JS, zero tokens). Validates that orchestrations parse, runs execute, events stream, and per-phase state flows end-to-end.",
+  "lifecycle": { "tags": ["starter"] },
+  "phases": [
+    {
+      "name": "greet",
+      "code": { "source": "return 'hello ' + (input || 'world')" }
+    },
+    {
+      "name": "shout",
+      "code": { "source": "return (input || '').toUpperCase() + '!'" }
+    },
+    {
+      "name": "summarize",
+      "code": { "source": "return 'final: \"' + input + '\" (' + input.length + ' chars)'" }
+    }
+  ]
+}

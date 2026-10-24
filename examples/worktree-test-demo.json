@@ -1,0 +1,64 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "worktree-test-demo",
+  "description": "Run a repository's tests in an isolated per-run git worktree, keep the full test log as a run artifact, and — after a human approves — attach that log to a ticket as a file. No model calls. demo/setup.sh creates a sample repository with a failing test; demo/sink.mjs plays the tracker. Needs SAMMY_CODE_RUN_ALLOW to allow `node --test`.",
+  "lifecycle": {
+    "tags": [
+      "demo",
+      "worktrees"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "repo",
+      "kind": "text",
+      "required": true,
+      "description": "Path to a local git repository with a `node --test` suite."
+    }
+  ],
+  "worktrees": [
+    {
+      "name": "repo",
+      "repo": "${repo}"
+    }
+  ],
+  "notify": {
+    "onGate": "http://127.0.0.1:5199/notify"
+  },
+  "phases": [
+    {
+      "name": "run-tests",
+      "timeout": 120,
+      "continueOnError": true,
+      "description": "Runs inside the run's own worktree; the full log is kept even when the tests fail.",
+      "code": {
+        "run": "node --test",
+        "artifact": "test-log"
+      }
+    },
+    {
+      "name": "review-log",
+      "lock": true,
+      "description": "Open the test-log artifact on the run page, then approve to attach it.",
+      "code": {
+        "source": "return 'Test log captured on branch ' + state.worktrees.repo.branch + '. Approve to attach it to DEMO-1.';"
+      }
+    },
+    {
+      "name": "attach-log",
+      "http": {
+        "url": "http://127.0.0.1:5199/tickets/DEMO-1/attachments",
+        "method": "POST",
+        "files": [
+          {
+            "artifact": "test-log",
+            "filename": "test-log.txt"
+          }
+        ],
+        "allowHosts": [
+          "127.0.0.1"
+        ]
+      }
+    }
+  ]
+}

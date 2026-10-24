@@ -1,0 +1,52 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "support-ticket-resolution",
+  "description": "Customer-support queue: an agent drafts a resolution, a support lead QAs it, then a router acts on the verdict — escalate genuine bugs to engineering, revise-and-recheck if the draft needs work, or finalize and send when it's good. Showcases a draft → QA → `route`-on-verdict pattern where the routing decision is driven by an upstream agent's judgement rather than the raw input.",
+  "lifecycle": { "tags": ["support", "triage"] },
+  "inputs": [
+    {
+      "name": "ticket",
+      "kind": "text",
+      "required": true,
+      "description": "The customer support ticket — the issue in the customer's words, plus any context."
+    }
+  ],
+  "phases": [
+    {
+      "name": "draft",
+      "agent": "agents/support-agent.md",
+      "as": "draft",
+      "prompt": "Draft a resolution for this support ticket — answer first, steps second, in the customer's tone. Add an internal note on root cause.\n\nTICKET:\n${ticket}"
+    },
+    {
+      "name": "qa",
+      "agent": "agents/support-lead.md",
+      "as": "verdict",
+      "prompt": "QA this drafted reply for accuracy, tone, and policy. Verdict: send-as-is / edit / escalate, with specifics.\n\nDRAFT:\n${draft}\n\nORIGINAL TICKET:\n${ticket}"
+    },
+    {
+      "name": "act-on-verdict",
+      "description": "escalate → package for engineering. edit → revise and the lead's notes get applied. default (send) → finalize the customer-ready reply.",
+      "route": {
+        "router": "agents/router.md",
+        "branches": {
+          "escalate": {
+            "name": "engineering-escalation",
+            "agent": "agents/summarizer.md",
+            "prompt": "This ticket is a genuine bug / at-risk account. Package a crisp engineering escalation: repro, impact, and the customer-facing holding message.\n\nVERDICT:\n${verdict}\n\nTICKET:\n${ticket}"
+          },
+          "edit": {
+            "name": "revise",
+            "agent": "agents/support-agent.md",
+            "prompt": "Revise the reply to address the lead's QA notes, then present the customer-ready version.\n\nLEAD NOTES:\n${verdict}\n\nORIGINAL DRAFT:\n${draft}"
+          }
+        },
+        "default": {
+          "name": "finalize-and-send",
+          "agent": "agents/writer.md",
+          "prompt": "The reply passed QA. Finalize the customer-ready message and a one-line resolution log.\n\nDRAFT:\n${draft}"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "company-operating-system",
+  "description": "The whole company, end to end, as one orchestration. Takes a single initiative (a new product / objective) and drives it through every function by NESTING each department's own orchestration as a subflow: discovery → product spec → engineering build (ticket-to-pr) → legal/compliance gate (legal-contract-review) → go-to-market (marketing-campaign + sales-lead-to-close, in parallel) → finance approval (finance-invoice-approval) → hiring to scale (hr-candidate-screening) → support readiness (support-ticket-resolution) → customer-success retention → a locked board readout. Shared run state flows across every subflow boundary, so each function builds on the last. This is the flagship example of composition: it references seven other orchestrations rather than copying them, so editing any one department flow updates the company flow automatically. Look for the 🔗 Nested badge — it's the most-nested orchestration in the set.",
+  "budget": {
+    "maxCostUsd": 200
+  },
+  "lifecycle": {
+    "tags": ["business-ops"],
+    "stage": "prod"
+  },
+  "inputs": [
+    {
+      "name": "initiative",
+      "kind": "text",
+      "required": true,
+      "description": "The company initiative to drive end-to-end — a new product, launch, or strategic objective."
+    }
+  ],
+  "phases": [
+    {
+      "name": "discovery",
+      "description": "Two reads of the opportunity in parallel — market and customer — synthesized into one grounded brief.",
+      "converge": [
+        {
+          "name": "market-read",
+          "agent": "agents/data-analyst.md",
+          "prompt": "Assess the MARKET for this initiative — demand signal, competitive landscape, timing. Evidence-backed, honest confidence.\n\nINITIATIVE:\n${initiative}"
+        },
+        {
+          "name": "customer-read",
+          "agent": "agents/pm.md",
+          "prompt": "Frame the CUSTOMER problem this initiative addresses — who hurts, how much, and what 'solved' looks like.\n\nINITIATIVE:\n${initiative}"
+        }
+      ],
+      "merger": "agents/summarizer.md",
+      "as": "discovery"
+    },
+    {
+      "name": "product-spec",
+      "agent": "agents/pm.md",
+      "as": "spec",
+      "prompt": "Turn the discovery into a crisp product spec — goal, acceptance criteria, in/out of scope, open questions.\n\nDISCOVERY:\n${discovery}\n\nINITIATIVE:\n${initiative}"
+    },
+    {
+      "name": "engineering-build",
+      "description": "Nest the engineering ticket-to-PR flow: plan gate (human lock) → implement/QA loop → review. Inherits ${spec} as its input.",
+      "subflow": "ticket-to-pr",
+      "as": "build"
+    },
+    {
+      "name": "legal-launch-gate",
+      "description": "Compile the launch's customer-facing terms, then nest the multi-lens legal review (compliance / liability / commercial) ending in counsel sign-off.",
+      "phases": [
+        {
+          "name": "compile-launch-terms",
+          "agent": "agents/writer.md",
+          "as": "contract",
+          "prompt": "Draft the customer-facing terms + data-handling summary implied by this launch (what we collect, how we use it, the commitments we're making). This is the document legal will review.\n\nSPEC:\n${spec}\n\nBUILD SUMMARY:\n${build}"
+        },
+        {
+          "name": "review-terms",
+          "subflow": "legal-contract-review",
+          "as": "legalReview"
+        }
+      ]
+    },
+    {
+      "name": "go-to-market",
+      "description": "Prep the GTM artifacts, then run marketing and sales AT THE SAME TIME (each its own nested orchestration); chief-of-staff merges the two motions into one GTM readout.",
+      "phases": [
+        {
+          "name": "campaign-brief",
+          "agent": "agents/marketing-strategist.md",
+          "as": "brief",
+          "prompt": "Write the launch brief marketing will execute against — what's shipping, why it matters, to whom.\n\nSPEC:\n${spec}\n\nDISCOVERY:\n${discovery}"
+        },
+        {
+          "name": "seed-target-account",
+          "agent": "agents/account-exec.md",
+          "as": "lead",
+          "prompt": "Describe one representative target account (ICP) to run through the sales motion for this launch — who they are, their need, rough deal size.\n\nDISCOVERY:\n${discovery}"
+        },
+        {
+          "name": "launch-motions",
+          "converge": [
+            {
+              "name": "marketing",
+              "subflow": "marketing-campaign"
+            },
+            {
+              "name": "sales",
+              "subflow": "sales-lead-to-close"
+            }
+          ],
+          "merger": "agents/chief-of-staff.md",
+          "as": "gtm"
+        }
+      ]
+    },
+    {
+      "name": "finance-approval",
+      "description": "Compile the launch spend request, then nest the AP approval matrix (auto / manager / locked executive sign-off).",
+      "phases": [
+        {
+          "name": "compile-spend-request",
+          "agent": "agents/writer.md",
+          "as": "invoice",
+          "prompt": "Compile the launch spend as an approval-ready invoice / PO — vendor(s), line items, total, and the budget it draws from.\n\nGTM PLAN:\n${gtm}"
+        },
+        {
+          "name": "approve-spend",
+          "subflow": "finance-invoice-approval",
+          "as": "finance"
+        }
+      ]
+    },
+    {
+      "name": "scale-the-team",
+      "description": "Derive the role this launch needs and a representative candidate, then nest the hiring loop (screen → panel → locked hire call).",
+      "phases": [
+        {
+          "name": "open-the-role",
+          "agent": "agents/writer.md",
+          "as": "application",
+          "prompt": "Define the one role this launch most needs to hire for, and draft a representative candidate application (resume-style) to run through screening.\n\nSPEC:\n${spec}\n\nBUILD SUMMARY:\n${build}"
+        },
+        {
+          "name": "screen-candidate",
+          "subflow": "hr-candidate-screening",
+          "as": "hire"
+        }
+      ]
+    },
+    {
+      "name": "support-readiness",
+      "description": "Generate a representative early-customer ticket, then nest the support resolution flow (draft → QA → route) to prove the queue is ready.",
+      "phases": [
+        {
+          "name": "anticipate-first-ticket",
+          "agent": "agents/writer.md",
+          "as": "ticket",
+          "prompt": "Write a realistic early-customer support ticket this launch is likely to generate — in the customer's voice, with enough context to resolve.\n\nSPEC:\n${spec}"
+        },
+        {
+          "name": "resolve-ticket",
+          "subflow": "support-ticket-resolution",
+          "as": "support"
+        }
+      ]
+    },
+    {
+      "name": "retention-plan",
+      "agent": "agents/customer-success.md",
+      "as": "success",
+      "prompt": "Build the post-sale retention plan — 30/60/90 onboarding, success metrics, and the earliest churn-risk signals — for the customers this GTM will land.\n\nGTM PLAN:\n${gtm}\n\nDISCOVERY:\n${discovery}"
+    },
+    {
+      "name": "board-readout",
+      "agent": "agents/chief-of-staff.md",
+      "lock": true,
+      "prompt": "Synthesize the entire initiative into a one-screen board readout — bottom line, status by function, decisions needed, and top cross-functional risks. Connect threads no single function saw.\n\nDISCOVERY:\n${discovery}\nSPEC:\n${spec}\nENGINEERING:\n${build}\nLEGAL:\n${legalReview}\nGO-TO-MARKET:\n${gtm}\nFINANCE:\n${finance}\nHIRING:\n${hire}\nSUPPORT:\n${support}\nRETENTION:\n${success}"
+    }
+  ]
+}

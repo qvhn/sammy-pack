@@ -1,0 +1,30 @@
+{
+  "name": "durable-wait-demo",
+  "description": "No-LLM demo of the `wait` body kind (zero tokens). Phase 1 stamps a start marker, then a 5s durable timer parks the run (on the server it snapshot-pauses at zero cost and the wait sweeper resumes it), then a signal wait parks until `POST /api/runs/<id>/signal {\"signal\":\"go\",\"payload\":\"...\"}` delivers — the payload becomes the phase output. The final phase folds both results. `timeoutSeconds` keeps the demo from parking forever if nobody signals.",
+  "lifecycle": { "tags": ["starter"] },
+  "phases": [
+    {
+      "name": "stamp-start",
+      "code": { "source": "return 'started with input: ' + (input || '(none)')" },
+      "as": "startNote"
+    },
+    {
+      "name": "cool-down",
+      "wait": { "seconds": 5 },
+      "as": "timerResult"
+    },
+    {
+      "name": "await-go-signal",
+      "wait": { "signal": "go", "timeoutSeconds": 3600 },
+      "as": "goPayload",
+      "onError": {
+        "name": "await-go-signal/timed-out",
+        "code": { "source": "return 'no go-signal arrived within an hour; continuing without it'" }
+      }
+    },
+    {
+      "name": "summarize",
+      "code": { "source": "return ['start: ' + vars.startNote, 'timer: ' + vars.timerResult, 'signal payload: ' + input].join('\\n')" }
+    }
+  ]
+}

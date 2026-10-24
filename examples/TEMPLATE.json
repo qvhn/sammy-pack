@@ -1,0 +1,63 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "template",
+  "description": "GENERIC DOMAIN-AGNOSTIC template — copy this to examples/<your-name>.json before editing. Before you edit it for your app, read CLAUDE.md + AGENTS.md and keep ALL content domain-agnostic: no app/company/screen/persona names, no credentials, no device IDs — use ${vars} for anything machine- or environment-specific. Companion walkthrough: TEMPLATE.md. This shows the common moving parts (vars, a deterministic code phase, an agent phase, a fan-out map, a nested subflow, triggers, a budget, lifecycle) — delete what you don't need.",
+  "lifecycle": { "tags": ["template"] },
+  "vars": {
+    "target": "${target}",
+    "threshold": "3"
+  },
+  "triggers": [
+    { "kind": "webhook", "path": "template-demo" }
+  ],
+  "budget": { "maxCostUsd": 5 },
+  "phases": [
+    {
+      "name": "prepare-input",
+      "description": "Deterministic setup — a pure-JS code phase costs zero tokens. Normalize / parse / reshape the input here instead of spending a model call. `code.source` runs sandboxed JS (no fs/network); prefer it. (`code.run` shells a real process and needs SAMMY_ALLOW_CODE_RUN=1 — see TEMPLATE.md.)",
+      "code": {
+        "source": "return JSON.stringify({ target: vars.target, input: (input || '').trim() })"
+      },
+      "as": "prepared"
+    },
+    {
+      "name": "do-the-work",
+      "description": "An agent phase — the model-in-the-loop kind. Bound it: maxTurns caps its lifespan, timeout caps wallclock, retry re-attempts transient failures. The prompt is interpolated, so ${prepared} (the prior phase, stored via `as`) and ${vars.threshold} resolve here.",
+      "agent": "agents/pm.md",
+      "prompt": "Work item: ${prepared}. Apply threshold ${vars.threshold}. Produce a JSON array of result objects.",
+      "as": "results",
+      "maxTurns": 12,
+      "timeout": 300,
+      "retry": { "times": 2, "backoff": "exponential", "initialMs": 1000 }
+    },
+    {
+      "name": "process-each",
+      "description": "Fan-out: run one body per array item from ${results}. Each item is ${item} (position ${index}). `serial:false` runs them concurrently (bounded by SAMMY_MAX_CONCURRENT_AGENTS); `concurrency` caps how many run at once within this map.",
+      "map": {
+        "over": "${results}",
+        "serial": false,
+        "concurrency": 3,
+        "body": {
+          "name": "process-one",
+          "agent": "agents/summarizer.md",
+          "prompt": "Summarize this result item (index ${index}): ${item}",
+          "continueOnError": true
+        }
+      },
+      "as": "processed"
+    },
+    {
+      "name": "nested-flow",
+      "description": "Compose a tested sub-orchestration by name (its `phases` run; state is shared, so ${processed} is visible inside). Point this at any orchestration in examples/, or delete this phase.",
+      "subflow": "smoke-test",
+      "as": "subResult"
+    },
+    {
+      "name": "final-review",
+      "description": "A human-approval gate: `lock: true` pauses the run until someone approves. Use it at any decision that needs a human or precedes an irreversible step.",
+      "agent": "agents/dev-lead.md",
+      "prompt": "Review the processed results before we finish:\n${processed}",
+      "lock": true
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "eval-pipeline",
+  "description": "Load a real eval dataset off disk, score every case against a shared rubric, then synthesize the per-case results into one report. `load-cases` (a deterministic code phase) reads the dataset's `rows` into a JSON array stored as ${cases}; the `map` fans out over that array — each case is the body's ${item}, with ${item.input} carrying its EXPECTED/OUTPUT/CRITERIA — and `synthesize` consolidates the verdicts. Re-target by changing vars.datasetPath to any dataset.",
+  "lifecycle": { "tags": ["evals"] },
+  "vars": {
+    "datasetPath": "datasets/correctness-calibration.json",
+    "rubric": "Score the OUTPUT 1-5 on correctness against the EXPECTED/CRITERIA (5 = fully correct, 1 = contradicts/fabricates/omits required facts). Justify the score in one sentence and end with a PASS (>=4) or FAIL (<4) verdict."
+  },
+  "phases": [
+    {
+      "name": "load-cases",
+      "description": "Read the eval dataset off disk (deterministic, zero-token) and emit its `rows` as a JSON array, stored as ${cases} for the map to fan out over. The path is ${datasetPath} relative to the repo root; the script resolves the root from the launch env so it stays portable. (code.run needs SAMMY_ALLOW_CODE_RUN=1 on the server.)",
+      "code": {
+        "run": "set -e\nREL=\"${datasetPath}\"\nfor ROOT in \"$npm_config_local_prefix/..\" \"$INIT_CWD\" \"$PWD/..\" \"$PWD\"; do\n  F=\"$ROOT/$REL\"\n  if [ -f \"$F\" ]; then\n    exec python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); rows=d.get(\"rows\") if isinstance(d,dict) else d; print(json.dumps(rows))' \"$F\"\n  fi\ndone\necho '[]'\n"
+      },
+      "as": "cases"
+    },
+    {
+      "name": "score-cases",
+      "description": "Score every real eval case against the shared rubric.",
+      "map": {
+        "over": "${cases}",
+        "serial": false,
+        "body": {
+          "name": "score-one",
+          "agent": "agents/judge-correctness.md",
+          "prompt": "Evaluate one eval case (index ${index}, id ${item.id}).\n\nThe case below contains the EXPECTED (or CRITERIA) and the OUTPUT to judge:\n\n${item.input}\n\nRubric: ${rubric}\n\nApply the rubric: give a 1-5 correctness score for the OUTPUT, one sentence of justification, and a PASS/FAIL verdict."
+        }
+      },
+      "as": "caseScores"
+    },
+    {
+      "name": "synthesize",
+      "agent": "agents/summarizer.md",
+      "description": "Consolidate the per-case scores into a single eval report.",
+      "prompt": "Per-case correctness scores:\n${caseScores}\n\nProduce one consolidated eval report: how many cases were scored, the overall verdict, the average/weakest score, and the specific cases (by id/index) that scored low and need attention."
+    }
+  ]
+}

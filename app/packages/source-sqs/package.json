@@ -1,0 +1,56 @@
+{
+  "name": "@sammy-pack/source-sqs",
+  "version": "0.1.0-alpha.0",
+  "description": "Optional Amazon SQS queue-source adapter for sammy-pack. Long-polls an SQS queue and delivers each message to a sammy-pack `queue` trigger over HTTP, acking (DeleteMessage) only after a 2xx. The AWS SDK is this package's own dependency \u2014 never the core's.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "sammy-source-sqs": "dist/bin/run.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "sammy-pack",
+    "queue",
+    "sqs",
+    "aws",
+    "adapter",
+    "broker",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qvhn/sammy-pack.git",
+    "directory": "app/packages/source-sqs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.600.0"
+  },
+  "peerDependencies": {
+    "@sammy-pack/sdk": ">=0.1.0-alpha.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0"
+  },
+  "bugs": {
+    "url": "https://github.com/qvhn/sammy-pack/issues"
+  },
+  "homepage": "https://github.com/qvhn/sammy-pack#readme"
+}

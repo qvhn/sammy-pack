@@ -1,0 +1,61 @@
+{
+  "name": "sammy-pack",
+  "version": "0.1.0-alpha.0",
+  "description": "JSON-schema-driven multi-agent orchestration engine. Walks a tree of composable phases (agents, parallel, converge, loop, route, map, conversation, subflow, a2a) with per-node provider routing, retries, timeouts, budgets, sandbox policy, and a durable run store.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "agent",
+    "orchestration",
+    "llm",
+    "workflow",
+    "openai",
+    "anthropic",
+    "gemini",
+    "a2a"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qvhn/sammy-pack.git",
+    "directory": "app/packages/core"
+  },
+  "dependencies": {
+    "@sammy-pack/sdk": "0.1.0-alpha.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0"
+  },
+  "peerDependencies": {
+    "better-sqlite3": ">=12.0.0",
+    "pg": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "bugs": {
+    "url": "https://github.com/qvhn/sammy-pack/issues"
+  },
+  "homepage": "https://github.com/qvhn/sammy-pack#readme"
+}

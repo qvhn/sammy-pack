@@ -1,0 +1,24 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "content-review-board",
+  "description": "Four judges review a piece of content in parallel — correctness, completeness, tone, format — and a merger consolidates their verdicts into one go / no-go call. Showcases converge + merger.",
+  "lifecycle": { "tags": ["content", "review"] },
+  "phases": [
+    {
+      "name": "draft",
+      "agent": "agents/writer.md",
+      "description": "Produce the content to be reviewed."
+    },
+    {
+      "name": "review-board",
+      "description": "All four judges see the same draft and review concurrently.",
+      "converge": [
+        { "name": "check-correctness", "agent": "agents/judge-correctness.md" },
+        { "name": "check-completeness", "agent": "agents/judge-completeness.md" },
+        { "name": "check-tone", "agent": "agents/judge-tone.md" },
+        { "name": "check-format", "agent": "agents/judge-format.md" }
+      ],
+      "merger": "agents/summarizer.md"
+    }
+  ]
+}

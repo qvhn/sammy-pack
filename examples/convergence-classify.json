@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "convergence-classify",
+  "description": "Calibration harness orchestration: routes a loop-iteration trajectory through judge-convergence and emits the CHOSEN decision as its output (each branch is a code node returning its own name). That makes the judge eval-able — an eval with an `exact` scorer measures how accurately it stops loops that are done/oscillating/stalled and continues loops making real progress. Pair with datasets/convergence-calibration.json + evals/convergence-calibration.json.",
+  "lifecycle": { "tags": ["judge", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-convergence.md",
+        "branches": {
+          "STOP": { "name": "is-stop", "code": { "source": "return 'STOP'" } },
+          "CONTINUE": { "name": "is-continue", "code": { "source": "return 'CONTINUE'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

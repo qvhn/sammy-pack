@@ -1,0 +1,22 @@
+{
+  "name": "footguns",
+  "description": "A deliberately-broken fixture carrying the three real-world foot-guns preview is built to catch — used by preview-footguns.test.ts as the regression proof. NOT a shipped example; lives under __tests__/fixtures so it never reaches the examples allowlist.\n\nFOOT-GUN 1 (decorative-var): `appEnv` is declared in vars and read ONLY in the build phase's description, never threaded into the build COMMAND — the exact 'a stage build that's really dev' bug.\nFOOT-GUN 2 (unbound ${ref} in code.run): the build command interpolates ${buildFlags}, which no var/input/as produces — it renders as a literal `${buildFlags}` in the shell command.\nFOOT-GUN 3 (unbound ${ref} in prompt): the notify prompt interpolates ${releaseReport}, which nothing produces — the literal-passthrough that once shipped a QA report containing a raw `${releaseReport}`.",
+  "vars": {
+    "repo": "/work/repo",
+    "appEnv": "dev"
+  },
+  "phases": [
+    {
+      "name": "build",
+      "description": "Builds the project for the ${appEnv} environment.",
+      "code": {
+        "run": "${repo}/scripts/build-install.sh ${repo} ${buildFlags}"
+      }
+    },
+    {
+      "name": "notify",
+      "agent": "agents/summarizer.md",
+      "prompt": "Post the build result for ${repo} to ${releaseReport}. Summarize what shipped."
+    }
+  ]
+}

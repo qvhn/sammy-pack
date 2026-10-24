@@ -1,0 +1,164 @@
+{
+  "name": "correctness-calibration",
+  "description": "Labeled EXPECTED/OUTPUT pairs for calibrating judge-correctness. Each row is an output to verify against its expected output (or criteria), with the human verdict (PASS/FAIL) as expectedOutput. PASS rows include paraphrases, reorderings, unit/date equivalences, and correct-but-verbose outputs that LOOK wrong; FAIL rows include fluent, polished outputs hiding one contradiction, omission, or hallucination. Run via the correctness-calibration eval (exact scorer) to measure verdict accuracy.",
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000,
+  "rows": [
+    {
+      "id": "corr-1",
+      "input": "EXPECTED: The invoice summary must state a total of $1,240 due April 30 on net-30 terms.\nOUTPUT: Total owed is $1,240, payable by April 30 under net-30 terms.",
+      "expectedOutput": "PASS",
+      "tags": ["paraphrase"]
+    },
+    {
+      "id": "corr-2",
+      "input": "EXPECTED: The incident summary must name the three affected services: billing-api, auth-gateway, and report-worker.\nOUTPUT: The outage touched report-worker, billing-api, and auth-gateway.",
+      "expectedOutput": "PASS",
+      "tags": ["reordered"]
+    },
+    {
+      "id": "corr-3",
+      "input": "EXPECTED: The maintenance window is 2 hours.\nOUTPUT: The maintenance window lasts 120 minutes.",
+      "expectedOutput": "PASS",
+      "tags": ["unit-equivalence"]
+    },
+    {
+      "id": "corr-4",
+      "input": "EXPECTED: The beta-search feature flag must be reported as disabled in production.\nOUTPUT: In production, the beta-search flag is turned off.",
+      "expectedOutput": "PASS",
+      "tags": ["synonym"]
+    },
+    {
+      "id": "corr-5",
+      "input": "CRITERIA: Summarize the changelog entry below, preserving every fact.\nINPUT: v3.2 adds dark mode. Keyboard shortcuts are unchanged.\nOUTPUT: v3.2 introduces dark mode; keyboard shortcuts stay as they were.",
+      "expectedOutput": "PASS",
+      "tags": ["paraphrase"]
+    },
+    {
+      "id": "corr-6",
+      "input": "EXPECTED: The runbook must list three steps in order: drain traffic, apply the migration, re-enable traffic.\nOUTPUT: First drain traffic; once drained, apply the migration; finally re-enable traffic.",
+      "expectedOutput": "PASS",
+      "tags": ["format"]
+    },
+    {
+      "id": "corr-7",
+      "input": "EXPECTED: Error rate returned to baseline at 09:15 UTC.\nOUTPUT: error rate returned to baseline at 09:15 utc",
+      "expectedOutput": "PASS",
+      "tags": ["formatting"]
+    },
+    {
+      "id": "corr-8",
+      "input": "EXPECTED: The checkout error rate was 0.5% during the incident.\nOUTPUT: Roughly one in every two hundred checkout requests failed during the incident.",
+      "expectedOutput": "PASS",
+      "tags": ["unit-equivalence", "borderline"]
+    },
+    {
+      "id": "corr-9",
+      "input": "EXPECTED: Extracted fields — customer: Acme Corp; plan: Team; seats: 45; renewal: 2026-09-01.\nOUTPUT: The account belongs to Acme Corp on the Team plan with 45 seats, renewing September 1, 2026.",
+      "expectedOutput": "PASS",
+      "tags": ["verbose"]
+    },
+    {
+      "id": "corr-10",
+      "input": "CRITERIA: State which quarter revenue peaked, given: Q1 $1.1M, Q2 $1.4M, Q3 $0.9M.\nOUTPUT: Revenue peaked in Q2 at $1.4M.",
+      "expectedOutput": "PASS",
+      "tags": ["criteria-only"]
+    },
+    {
+      "id": "corr-11",
+      "input": "EXPECTED: The job runs on the staging Kubernetes cluster.\nOUTPUT: The job runs on the staging k8s cluster.",
+      "expectedOutput": "PASS",
+      "tags": ["synonym"]
+    },
+    {
+      "id": "corr-12",
+      "input": "EXPECTED: The fix shipped on 2026-03-04 in release v2.3.1.\nOUTPUT: Release v2.3.1, shipped March 4, 2026, contains the fix.",
+      "expectedOutput": "PASS",
+      "tags": ["format"]
+    },
+    {
+      "id": "corr-13",
+      "input": "EXPECTED: The rollback completed and no data was lost.\nOUTPUT: No data loss occurred; the rollback finished successfully.",
+      "expectedOutput": "PASS",
+      "tags": ["paraphrase"]
+    },
+    {
+      "id": "corr-14",
+      "input": "EXPECTED: The invoice total is $1,240, due April 30.\nOUTPUT: Everything checks out: the invoice totals $1,420 and is due April 30. Payment terms verified, ready for approval.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction", "borderline"]
+    },
+    {
+      "id": "corr-15",
+      "input": "EXPECTED: Extracted fields — customer: Acme Corp; plan: Team; seats: 45; renewal: 2026-09-01.\nOUTPUT: Customer Acme Corp is on the Team plan, renewing 2026-09-01.",
+      "expectedOutput": "FAIL",
+      "tags": ["omission"]
+    },
+    {
+      "id": "corr-16",
+      "input": "EXPECTED: The support summary must state that the user reported a sync failure on two devices.\nOUTPUT: The user reported a sync failure on two devices and was issued a full refund.",
+      "expectedOutput": "FAIL",
+      "tags": ["hallucination"]
+    },
+    {
+      "id": "corr-17",
+      "input": "EXPECTED: The dependency graph shows billing-api calls auth-gateway.\nOUTPUT: auth-gateway calls billing-api.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction"]
+    },
+    {
+      "id": "corr-18",
+      "input": "EXPECTED: The fix shipped on March 4.\nOUTPUT: The fix shipped on March 14.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction"]
+    },
+    {
+      "id": "corr-19",
+      "input": "EXPECTED: After the fix the error rate decreased steadily back to baseline.\nOUTPUT: The error rate continued to climb after the fix was applied.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction"]
+    },
+    {
+      "id": "corr-20",
+      "input": "EXPECTED: A two-sentence summary of the outage cause and resolution.\nOUTPUT: Summary: [TODO — fill in after review]",
+      "expectedOutput": "FAIL",
+      "tags": ["placeholder"]
+    },
+    {
+      "id": "corr-21",
+      "input": "CRITERIA: Identify the root cause of the failed deploy from the log excerpt: 'image pull failed: tag v2.4 not found in registry'.\nOUTPUT: The deploy started at 14:02 and was rolled back at 14:20 by the on-call engineer.",
+      "expectedOutput": "FAIL",
+      "tags": ["omission", "hallucination"]
+    },
+    {
+      "id": "corr-22",
+      "input": "EXPECTED: The maintenance window is 2 hours.\nOUTPUT: A brief 2-minute maintenance window is scheduled.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction"]
+    },
+    {
+      "id": "corr-23",
+      "input": "EXPECTED: The legacy-export flag must be reported as disabled in production.\nOUTPUT: The legacy-export flag remains enabled in production.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction"]
+    },
+    {
+      "id": "corr-24",
+      "input": "CRITERIA: Summarize only what the ticket states: 'Exports time out for workspaces with more than 10,000 records.'\nOUTPUT: Exports time out for large workspaces, affecting 23% of paying customers.",
+      "expectedOutput": "FAIL",
+      "tags": ["hallucination", "borderline"]
+    },
+    {
+      "id": "corr-25",
+      "input": "EXPECTED: The release notes must state both facts: (1) the CSV export crash is fixed, (2) the export delimiter changed from semicolons to commas.\nOUTPUT: This release resolves the long-standing CSV export crash. The fix refactors the export pipeline, adds retry logic, and improves logging for failed exports.",
+      "expectedOutput": "FAIL",
+      "tags": ["omission", "borderline"]
+    },
+    {
+      "id": "corr-26",
+      "input": "EXPECTED: p95 latency improved from 840ms to 412ms.\nOUTPUT: p95 latency improved from 840ms to roughly 250ms.",
+      "expectedOutput": "FAIL",
+      "tags": ["contradiction"]
+    }
+  ]
+}

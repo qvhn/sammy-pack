@@ -1,0 +1,89 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "security-watch",
+  "description": "Polls a security advisory / dependency feed on an interval. judge-triage filters relevance (is this advisory actionable for us?), judge-severity scores it, and judge-risk gates the response: a reversible, well-evidenced patch can be drafted and PR'd automatically; anything riskier waits for human review. Point `source` at your CVE/Dependabot/advisory feed.",
+  "lifecycle": { "tags": ["reactive", "ops"] },
+  "triggers": [
+    { "kind": "webhook", "path": "security-watch-demo" }
+  ],
+  "phases": [
+    {
+      "name": "relevance",
+      "description": "Does this advisory actually apply to us, or is it noise/duplicate/needs-info?",
+      "route": {
+        "router": "agents/judge-triage.md",
+        "branches": {
+          "actionable": {
+            "name": "assess-and-respond",
+            "phases": [
+              {
+                "name": "severity",
+                "agent": "agents/judge-severity.md",
+                "as": "severity",
+                "description": "How urgent is the exposure (impact × blast-radius × reversibility × urgency)?"
+              },
+              {
+                "name": "plan-patch",
+                "agent": "agents/dev-lead.md",
+                "as": "patchPlan",
+                "description": "Scope the remediation (dependency bump / config change / mitigation)."
+              },
+              {
+                "name": "autonomy-gate",
+                "description": "Reversible + well-evidenced → auto-PR; otherwise human review; unsafe → block.",
+                "route": {
+                  "router": "agents/judge-risk.md",
+                  "branches": {
+                    "auto": {
+                      "name": "auto-patch-pr",
+                      "phases": [
+                        { "name": "implement", "agent": "agents/dev.md", "description": "Apply the patch." },
+                        { "name": "open-pr", "agent": "agents/github-adapter.md", "tools": ["github"], "description": "Open a PR for the patch." }
+                      ]
+                    },
+                    "review": {
+                      "name": "await-review",
+                      "agent": "agents/dev.md",
+                      "lock": true,
+                      "description": "Hold the patch for a human to review before opening a PR."
+                    },
+                    "block": {
+                      "name": "escalate-security",
+                      "agent": "agents/pm.md",
+                      "lock": true,
+                      "description": "High-risk change — escalate to a human owner."
+                    }
+                  },
+                  "default": {
+                    "name": "review-default",
+                    "agent": "agents/dev.md",
+                    "lock": true
+                  }
+                }
+              }
+            ]
+          },
+          "duplicate": {
+            "name": "note-duplicate",
+            "agent": "agents/summarizer.md",
+            "description": "Already tracked — note and skip."
+          },
+          "noise": {
+            "name": "ignore",
+            "code": { "source": "return 'Advisory not applicable to our stack. Ignored.'" }
+          },
+          "needs-info": {
+            "name": "research",
+            "agent": "agents/data-analyst.md",
+            "description": "Unclear applicability — gather more detail before deciding."
+          }
+        },
+        "default": {
+          "name": "human-security-triage",
+          "agent": "agents/pm.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

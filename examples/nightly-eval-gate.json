@@ -1,0 +1,54 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "nightly-eval-gate",
+  "description": "A cron-driven quality heartbeat: every night it runs the eval suite (nests eval-pipeline) and routes on the result — a regression opens a ticket and pages owners, a clean run is recorded. The unattended backstop that catches quality drift between releases, so regressions are found by the system at 3am rather than by users at noon.",
+  "lifecycle": { "tags": ["reactive", "evals"] },
+  "triggers": [
+    { "kind": "webhook", "path": "nightly-eval-gate-demo" }
+  ],
+  "phases": [
+    {
+      "name": "run-evals",
+      "subflow": "eval-pipeline",
+      "as": "evalResult",
+      "description": "Run the eval suite against the current build (nested orchestration)."
+    },
+    {
+      "name": "gate-on-result",
+      "description": "Did the eval suite regress versus the expected baseline?",
+      "route": {
+        "router": "agents/router.md",
+        "branches": {
+          "regressed": {
+            "name": "open-regression-ticket",
+            "phases": [
+              {
+                "name": "summarize-regression",
+                "agent": "agents/summarizer.md",
+                "as": "regressionSummary",
+                "description": "Summarize which evals regressed and by how much."
+              },
+              {
+                "name": "file-ticket",
+                "agent": "agents/jira-adapter.md",
+                "tools": ["jira"],
+                "description": "Open a ticket for the regression and page the owners."
+              }
+            ]
+          },
+          "clean": {
+            "name": "record-pass",
+            "agent": "agents/summarizer.md",
+            "description": "All evals within tolerance — record the green run."
+          }
+        },
+        "default": {
+          "name": "human-review",
+          "agent": "agents/pm.md",
+          "lock": true,
+          "description": "Ambiguous eval result — a human looks."
+        }
+      }
+    }
+  ]
+}

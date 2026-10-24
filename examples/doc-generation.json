@@ -1,0 +1,28 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "doc-generation",
+  "description": "Outline → draft → critique-and-rewrite loop → format check. A judge ends the loop once the critique stops finding substantive issues.",
+  "lifecycle": { "tags": ["content"] },
+  "phases": [
+    {
+      "name": "outline",
+      "agent": "agents/writer.md",
+      "description": "Produce a section-by-section outline from the brief.",
+      "as": "outline"
+    },
+    {
+      "name": "polish",
+      "description": "Draft + critique until the judge says STOP (max 5 passes).",
+      "loop": {
+        "body": { "name": "draft", "agent": "agents/writer.md" },
+        "maxIterations": 5,
+        "judge": "agents/critique.md"
+      }
+    },
+    {
+      "name": "format-check",
+      "agent": "agents/judge-format.md",
+      "description": "Final formatting / structure pass before publish."
+    }
+  ]
+}

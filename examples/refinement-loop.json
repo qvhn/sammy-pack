@@ -1,0 +1,21 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "refinement-loop",
+  "description": "Draft → critique → rewrite until the critique agent says STOP. Showcases loop with judge and retryOnFailure.",
+  "lifecycle": { "tags": ["starter", "loop"] },
+  "phases": [
+    {
+      "name": "polish",
+      "loop": {
+        "body": {
+          "name": "draft",
+          "agent": "agents/writer.md"
+        },
+        "maxIterations": 5,
+        "judge": "agents/critique.md",
+        "until": "[APPROVED]",
+        "retryOnFailure": true
+      }
+    }
+  ]
+}

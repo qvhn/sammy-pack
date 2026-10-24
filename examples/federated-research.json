@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "federated-research",
+  "description": "Federated research: a local PM frames the question, the heavy research is delegated to a remote agent over the A2A protocol, and a local writer synthesizes the memo. Shows the `a2a` node composing with retry / timeout / onError — if the remote agent is unreachable, a local summarizer covers the gap.",
+  "lifecycle": { "tags": ["a2a", "research"] },
+  "phases": [
+    {
+      "name": "frame-the-question",
+      "agent": "agents/pm.md",
+      "prompt": "Turn this request into a crisp research brief — scope, key questions, and what a good answer looks like:\n\n${input}",
+      "as": "brief"
+    },
+    {
+      "name": "delegate-to-partner",
+      "a2a": {
+        "agentCard": "https://partner.example.com/.well-known/agent-card.json",
+        "skill": "research"
+      },
+      "prompt": "Research request:\n\n${brief}",
+      "as": "partnerFindings",
+      "timeout": 600,
+      "retry": { "times": 2, "backoff": "exponential", "initialMs": 1000 },
+      "onError": {
+        "name": "local-fallback-research",
+        "agent": "agents/summarizer.md",
+        "prompt": "The remote research agent was unreachable (${error.message}). Produce the best findings you can from the brief alone:\n\n${brief}"
+      }
+    },
+    {
+      "name": "synthesize",
+      "agent": "agents/writer.md",
+      "prompt": "Write the final research memo.\n\nBrief:\n${brief}\n\nFindings:\n${partnerFindings}"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "parity-corpus",
+  "description": "Corpus fixture for the faithfulness parity test. Exercises the surfaces whose resolution must be byte-identical between the executor and preview: a static-prompt agent (interpolates vars + initial input), a static map (per-item ${item}/${index} resolution), a parameterized agent path, and a static code.run command. NOT a shipped example.",
+  "vars": {
+    "repo": "/work/repo",
+    "env": "stg",
+    "greeting": "hello"
+  },
+  "phases": [
+    {
+      "name": "greet",
+      "agent": "agents/echo.md",
+      "prompt": "Say ${greeting} to the world, then process input: ${input}. Target env is ${env}."
+    },
+    {
+      "name": "per-item",
+      "map": {
+        "over": "[\"alpha\", \"beta\", \"gamma\"]",
+        "body": {
+          "name": "handle",
+          "agent": "agents/echo.md",
+          "prompt": "Item ${index} is '${item}' in repo ${repo}."
+        }
+      }
+    },
+    {
+      "name": "dynamic-agent",
+      "agent": "agents/${env}-runner.md",
+      "prompt": "Run for ${env}."
+    },
+    {
+      "name": "shell",
+      "code": {
+        "run": "${repo}/scripts/check.sh --env ${env}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Build outputs — generated bundles, never lint these.
+web-dist/
+dist/
+coverage/

@@ -1,0 +1,831 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/sammy-pack/schema/orchestration.schema.json",
+  "title": "Orchestration",
+  "description": "A sammy-pack orchestration tree. See docs/schema.md. PARITY CONTRACT: every property added under $defs.node.properties must also be (a) handled in app/src/llm/executor.ts and (b) documented in .claude/skills/sammy-pack/SKILL.md. The Jest test at app/__tests__/cli-parity.test.ts fails on drift.",
+  "$ref": "#/$defs/node",
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name":        { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+
+        "agent":       { "type": "string", "minLength": 1 },
+        "agents":      { "type": "array",  "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+        "phases":      { "type": "array",  "items": { "$ref": "#/$defs/node" },           "minItems": 1 },
+        "parallel":    { "type": "array",  "items": { "$ref": "#/$defs/node" },           "minItems": 2 },
+        "converge":    { "type": "array",  "items": { "$ref": "#/$defs/node" },           "minItems": 2 },
+        "subflow":     { "type": "string", "minLength": 1 },
+        "loop":          { "$ref": "#/$defs/loopBody" },
+        "conversation":  { "$ref": "#/$defs/conversationBody" },
+        "route":         { "$ref": "#/$defs/routeBody" },
+        "switch":        { "$ref": "#/$defs/switchBody" },
+        "map":           { "$ref": "#/$defs/mapBody" },
+        "a2a":           { "$ref": "#/$defs/a2aBody" },
+        "code":          { "$ref": "#/$defs/codeBody" },
+        "wait":          { "$ref": "#/$defs/waitBody" },
+
+        "merger":      { "type": "string", "minLength": 1 },
+        "lock":        { "type": "boolean" },
+        "input":       { "$ref": "#/$defs/schemaRef" },
+        "output":      { "$ref": "#/$defs/schemaRef" },
+
+        "as":          { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
+                         "description": "Name this node's output; later nodes can read it as ${name}." },
+        "when":        { "type": "string",
+                         "description": "Skip this node when the interpolated predicate is falsy." },
+        "halt":        { "type": "boolean",
+                         "description": "End the run once this node completes — a controlled early return; the run finishes with this node's output and no later sibling/phase runs. Pair with `when` for a conditional exit ('return when ${...}'). Unwinds through enclosing phases / loop / serial-map sequences." },
+        "idempotencyKey": { "type": "string", "minLength": 1,
+                         "description": "Stable dedupe key for this phase's external side effect (interpolated — use ${vars} / ${as} state for run-scoped keys). On an `a2a` leaf it is sent as message metadata.idempotencyKey: a sammy-pack receiver returns the EXISTING task for a repeated key instead of starting a duplicate run, so a crashed-and-resumed dispatch doesn't double-execute remotely (receiver-side cache is per-process). Other node kinds ignore it today." },
+        "onError":     { "$ref": "#/$defs/node",
+                         "description": "Recovery branch; runs after retries exhausted, with ${error.message} in scope." },
+        "timeout":     { "type": "number", "exclusiveMinimum": 0,
+                         "description": "Per-attempt wallclock timeout in seconds. When unset, the node still gets a generous default hard cap (DEFAULT_NODE_TIMEOUT_SEC, ~1800s, overridable via SAMMY_DEFAULT_NODE_TIMEOUT_SEC) so nothing runs unbounded." },
+        "stallTimeout": { "type": "number", "exclusiveMinimum": 0,
+                         "description": "Stall watchdog in seconds: abort if this node yields no progress event for this long, even while under its `timeout`. The timer resets on every emitted run event — and since agent phases emit a throttled phase-heartbeat (≤ ~1/30s) whenever the SDK turn is working without producing text or completed tool calls (thinking, streamed tool arguments), event silence and watchdog silence are the SAME clock: a running phase whose event stream has been quiet for minutes is genuinely wedged, not quietly working. Fires -> StallError -> retry / onError. Defaults to DEFAULT_STALL_TIMEOUT_SEC (~420s, overridable via SAMMY_DEFAULT_STALL_TIMEOUT_SEC). Raise it for a node that legitimately runs long without emitting output." },
+        "retry":       { "$ref": "#/$defs/retryPolicy" },
+        "onStall":     { "$ref": "#/$defs/onStallPolicy" },
+        "budget":      { "$ref": "#/$defs/budget" },
+        "tools":       { "type": "array", "items": { "type": "string", "minLength": 1 },
+                         "description": "Connector ids this leaf agent needs at run time." },
+
+        "mcp":         { "type": "array", "items": { "type": "string", "minLength": 1 },
+                         "description": "Names of MCP servers (from the workspace mcp/servers.json registry) to expose to THIS leaf agent — e.g. [\"ios-simulator\"] to drive a simulator, [\"atlassian\"] for Jira. The server resolves each name to its full config (secrets stay server-side); the agent gets the server's mcp__<name>__* tools. Server-owned runs only. Opt-in: an agent only receives the MCP servers it lists here." },
+
+        "autoApproveTools": { "type": "array", "items": { "type": "string", "minLength": 1 },
+                         "description": "Tool ids to PRE-APPROVE for this phase so a headless (unattended) run never stalls waiting for a human 'Allow' on a permission-gated MCP write tool. Accepts fully-qualified ids (mcp__<server>__<tool>), a whole server (mcp__<server>), or a built-in tool name; merged into the SDK's allowedTools. Composes with the run-wide SAMMY_ALLOWED_MCP_TOOLS env. Server-owned (Claude-Code-proxy) runs only." },
+
+        "subagents":   { "type": "array", "items": { "type": "string", "minLength": 1 },
+                         "description": "Names of agents (from the agents/ registry) to expose as Task-tool subagents to THIS leaf agent — the orchestrator agent invokes them via Task(\"subagent-name\", \"prompt\") and their text + tool calls fold into this phase's stream. When set, 'Task' is auto-added to the agent's effective tools. Claude-Code-proxy auth path only." },
+
+        "hooks":       { "type": "array", "items": { "type": "string", "minLength": 1 },
+                         "description": "Names of hooks (from the workspace hooks/hooks.json registry) to attach to this phase's SDK call — shell commands that fire before/after tool calls or other agent events. Server-owned runs only (the registry, incl. any secrets, stays server-side)." },
+
+        "maxThinkingTokens": { "type": "integer", "minimum": 0,
+                         "description": "Cap on extended-thinking token budget for this agent; 0 disables thinking entirely. Use to constrain cost on calls that don't need unbounded reasoning. Claude-Code-proxy auth path only." },
+
+        "permissionMode": { "type": "string", "enum": ["bypassPermissions", "acceptEdits", "plan", "default"],
+                         "description": "Claude Code SDK permission mode for this agent's tool calls (mirrors --permission-mode). Effective only on leaf agents with tools and only via the Claude-Code-proxy auth path. Composes tighten-only with sandbox.permissionMode (the stricter wins). 'bypassPermissions' matches historical behavior; 'plan' is read-only." },
+
+        "prompt":      { "type": "string", "minLength": 1,
+                         "description": "Literal user-message override; interpolated against state + scope (${item}, ${stateVar}, ${input}). Replaces upstream lastOutput as the agent's input for this phase." },
+
+        "maxTurns":    { "type": "integer", "minimum": 1,
+                         "description": "Per-phase SDK turn cap. Defaults to the proxy's 250-turn limit. Bump for agents that drive long iterative flows (UI automation, simulator-driving, multi-file refactors)." },
+
+        "maxAgentTokens": { "type": "integer", "minimum": 1,
+                         "description": "Per-phase soft SPEND ceiling for a leaf agent, counted in COST-WEIGHTED ('input-equivalent') tokens: fresh input x1, cache writes x1.25, cache READS x0.1, output x5. Crossing it soft-fails the phase (clean stop, subject to retry/onError/continueOnError) instead of running away. Cache reads are discounted deliberately — counting a re-read context at face value taxed DURATION, killing healthy hours-long supervision phases whose context the SDK was auto-compacting. The trip message reports turns / elapsed / context trajectory / compactions so runaway growth is distinguishable from long legitimate work. Precedence: this field > SAMMY_MAX_AGENT_TOKENS env > built-in default (30M); 0 disables. Raw-token and USD caps for a subtree live on `budget`." },
+
+        "continueOnError": { "type": "boolean",
+                             "description": "Failures inside this phase emit a phase-error event but the enclosing sequence / map iteration continues. Use for 'log it and move on' QA passes." },
+
+        "finally":     { "type": "boolean",
+                         "description": "Finalizer phase: runs after the other phases in its containing `phases` sequence EVEN IF a prior phase threw / timed out / the sequence is unwinding from an error (a try/finally for the sequence). Best-effort and honors its own `timeout`; if it itself errors, that is surfaced but never masks the original error that unwound the sequence. Use for aggregation / cleanup / triage that must always run — e.g. collate + file the findings of a long QA sweep even when one leg timed out. Multiple `finally` phases run in declaration order. Only meaningful inside a `phases` sequence." },
+
+        "version":     { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$",
+                         "description": "Top-level only: semver of THIS orchestration definition. Purely declarative today — the runtime stamps it on the run-start event so every run records which definition version it executed (alongside the full orchestrationSnapshot each run already pins). Policy: an in-flight/paused run always resumes against its SNAPSHOT, never a newer definition; bump MAJOR when a change would make replaying an old run's checkpoints against the new tree wrong (renamed phases, moved gates), MINOR for added phases/decorators, PATCH for prompt tweaks. Read only off the orchestration root." },
+
+        "vars":        { "type": "object",
+                         "additionalProperties": { "type": "string" },
+                         "description": "Top-level only: key/value pairs interpolated into descendant prompts as ${name}. Use to de-duplicate values that appear in many phases (simulator UDIDs, environment names)." },
+
+        "defaults":    { "$ref": "#/$defs/orchestrationDefaults",
+                         "description": "Top-level only: run-wide fallbacks for the per-node resource limits (timeout / stallTimeout / maxAgentTokens). A node that omits one inherits the value here before falling back to the env / built-in default; per-node values still win. Read only off the orchestration root — declare a limit once instead of on every phase." },
+
+        "autoApproveLocks": { "type": "boolean",
+                         "description": "Top-level only: auto-approve every `lock: true` human gate instead of pausing for an interactive approval. For UNATTENDED runs (cron / webhook) where no human is present to approve — without it a locked phase blocks forever and the run silently wedges. The gate still emits its lock-gate event (audit trail preserved); only the pause is skipped. Defaults to false (every lock pauses for human approval). Read only off the orchestration root." },
+
+        "concurrency": { "$ref": "#/$defs/orchestrationConcurrency",
+                         "description": "Top-level only: mutual exclusion for runs that share an external resource. Runs whose root declares the same `concurrency.group` never run concurrently; `concurrency.policy` (skip / queue / cancel-existing, default queue) decides what a fire does when the group is busy. The group is an OPAQUE token — the framework knows nothing about the resource it stands for. Enforced at the server start-gate (server-owned runs only). Read only off the orchestration root." },
+
+        "triggers":    { "type": "array",
+                         "items": { "$ref": "#/$defs/trigger" },
+                         "description": "Top-level only: how this orchestration is invoked beyond the manual Run button. Webhook triggers expose POST /api/triggers/<path> and start a run with the request body as initial input; cron triggers fire on a schedule. Registered at server boot — adding a trigger needs a dev-server restart." },
+
+        "notify":      { "$ref": "#/$defs/notifyConfig",
+                         "description": "Top-level only: outbound notification on run terminal. `notify.onTerminal` is a URL the server POSTs a small JSON envelope { runId, orchestration, status, summary? } to the moment the run reaches a terminal status (done / error / cancelled / paused). Best-effort and fire-and-forget — a slow / dead endpoint never blocks or fails the run; webhook errors are swallowed. A server-boundary feature (fired from the terminal hook, resolved at run start); the executor itself ignores it. Read only off the orchestration root." },
+
+        "limits":      { "$ref": "#/$defs/orchestrationLimits",
+                         "description": "Top-level only: per-orchestration limits checked when a TRIGGER fires — runs per day, spend per day / month, counting every run of the orchestration (manual starts included). A trigger fire over a limit is HELD (re-queued, not dropped) until the window rolls over; a cron / polling tick is skipped instead. Manual starts are never held. Days and months are server-local, like the workspace budget." },
+
+        "worktrees":   { "type": "array", "items": { "$ref": "#/$defs/worktreeDecl" },
+                         "description": "Top-level only: isolated git worktrees created per run, one per entry — a fresh branch checked out of a local repository before the run starts, its path exposed to every phase (${worktrees.<name>.path}, SAMMY_WORKTREE_<NAME>), and removed when the run ends. Concurrent runs never share a working tree." },
+
+        "http":        { "$ref": "#/$defs/httpBody" },
+
+        "lifecycle":   { "$ref": "#/$defs/lifecycle",
+                         "description": "Top-level only: deployment stage + deprecation state. Influences A2A discovery (deprecated orchestrations are hidden by default) and produces a phase-warning event at run start when deprecated." },
+
+        "state":       { "type": "object",
+                         "additionalProperties": { "$ref": "#/$defs/stateDecl" },
+                         "description": "Top-level only: named structured-state slots with merge semantics. When a downstream phase writes to a declared key via `as:`, the value flows through the reducer (append / merge / replace / concat / increment) instead of replacing the slot. Undeclared keys keep replace-on-write — purely additive." },
+
+        "inputs":      { "type": "array",
+                         "items": { "$ref": "#/$defs/inputDecl" },
+                         "description": "Top-level only: typed run inputs this orchestration accepts (a Jira ticket, a PRD/Confluence link, a URL, an uploaded doc). The run surface collects them, resolves each reference to text content, and seeds it into state as ${name} before phase 1. Orchestrations that need no input (e.g. a full QA sweep) simply omit this." },
+
+        "provider":    { "enum": ["anthropic", "openai", "gemini", "claude-code", "bedrock"],
+                         "description": "Route this phase to a specific LLM provider. Defaults to the caller's configured stream function (Claude Code proxy in the web app). Tool-use / subagents / MCP are Claude-specific and silently no-op on non-Anthropic providers in this cut." },
+
+        "model":       { "type": "string", "minLength": 1,
+                         "description": "Override the run-wide model for this phase. Pair with `provider` to route to a specific model on a specific provider (e.g. `provider: \"openai\", model: \"gpt-4o-mini\"`)." },
+
+        "effort":      { "enum": ["low", "medium", "high", "xhigh", "max"],
+                         "description": "Reasoning effort for this leaf agent's LLM call, passed straight to the SDK (the executor reads node.effort). Higher = deeper reasoning, more tokens/latency. Defaults to the run/proxy setting." },
+
+        "credential":  { "type": "string", "minLength": 1,
+                         "description": "Name of an entry in the workspace credentials.json registry. Two independent uses (a phase may do either or both): (1) provider routing — when paired with `provider`, the executor uses THIS credential's value as the API key for this phase only; (2) env injection — the credential is projected onto subprocess env vars by kind (jira → JIRA_API_TOKEN/JIRA_EMAIL/JIRA_BASE_URL, github → GITHUB_TOKEN, …) and set ONLY in the spawned agent's OS environment (never in the prompt/context), so the agent's Bash/curl steps can authenticate without the secret reaching the model. Server-owned runs only (the registry lives on the server)." },
+
+        "credentials": { "type": "array", "items": { "type": "string", "minLength": 1 },
+                         "description": "Like `credential`, but several at once — each named registry entry is resolved and its env projection merged (later entries win on key collision) into the spawned agent subprocess's OS environment. Use when one phase needs more than one connection (e.g. Jira + GitHub). Provider routing still uses the singular `credential`. Secrets reach ONLY the subprocess env, never the prompt/context. Server-owned runs only." },
+
+        "sandbox":     { "$ref": "#/$defs/sandbox",
+                         "description": "Execution-safety policy. Set at the root for a run-wide default; set on a node to tighten (never widen) it for that subtree. Caps which tools a tool-equipped agent may use, denies dangerous shell commands, and pins the SDK permission mode." },
+
+        "_layout":     {
+          "type": "object",
+          "description": "UI metadata: per-phase positions for the Graph editor. CLI ignores.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+
+        "__origin":    {
+          "type": "string",
+          "enum": ["imported", "shipped"],
+          "description": "Runtime-only provenance marker set by the filesystem loader (symlinked domain import vs in-repo example). Drives subflow name-resolution precedence (imported shadows shipped). Never persisted — stripped on save."
+        }
+      },
+      "oneOf": [
+        { "required": ["agent"] },
+        { "required": ["agents"] },
+        { "required": ["phases"] },
+        { "required": ["parallel"] },
+        { "required": ["converge"] },
+        { "required": ["subflow"] },
+        { "required": ["loop"] },
+        { "required": ["conversation"] },
+        { "required": ["route"] },
+        { "required": ["switch"] },
+        { "required": ["map"] },
+        { "required": ["a2a"] },
+        { "required": ["code"] },
+        { "required": ["wait"] },
+        { "required": ["http"] }
+      ],
+      "allOf": [
+        {
+          "if":   { "required": ["merger"] },
+          "then": { "required": ["converge"] }
+        },
+        {
+          "if":   { "required": ["tools"] },
+          "then": { "required": ["agent"] }
+        }
+      ]
+    },
+    "loopBody": {
+      "type": "object",
+      "required": ["body", "maxIterations"],
+      "additionalProperties": false,
+      "properties": {
+        "body":          { "$ref": "#/$defs/node" },
+        "maxIterations": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "until":         { "type": "string", "minLength": 1, "description": "Stop when body output contains this string (case-insensitive)." },
+        "whileOutput":   { "type": "string", "minLength": 1, "description": "Keep looping WHILE body output contains this string (case-insensitive). Stops when it no longer matches." },
+        "judge":         { "type": "string", "minLength": 1, "description": "Agent path; runs after each iteration with the body output. By default outputs STOP or CONTINUE; when `stopAtScore` is set, outputs a numeric score (0..1 or any range) and the loop stops once the score crosses the threshold." },
+        "stopAtScore":   { "type": "number", "description": "When set, the judge's output is parsed as a number and the loop exits as soon as `score >= stopAtScore`. The STOP / CONTINUE protocol still works (a literal STOP forces exit at any score)." },
+        "retryOnFailure":{ "type": "boolean", "description": "If true, errors inside the body cause a retry (next iteration sees the error) instead of failing the run." },
+        "maxFailures":   { "type": "integer", "minimum": 1, "description": "Hard cap on CONSECUTIVE failing iterations under `retryOnFailure`: the loop gives up (emitting loop-exhausted) after N straight failures instead of burning every remaining iteration re-doing fine work when the validator (not the work) is broken — the retry-storm guard. Only meaningful with retryOnFailure; unset = maxIterations is the only bound. A terminal-marked failure short-circuits immediately regardless of the count." },
+        "carryContext":  { "type": "boolean", "description": "Default true. Frame each re-iteration as a refinement of work that already exists so the worker builds on prior output instead of cold-starting and re-deriving context every round. Set false for legacy raw passthrough (fresh start each iteration)." },
+        "warmSession":   { "type": "boolean", "description": "Default false. Carry the full prior-iteration history forward each round so the worker retains complete context (stronger than carryContext; context grows each iteration). Stateless and durability-safe; opt-in for tight loops where re-exploration dominates." }
+      }
+    },
+    "conversationBody": {
+      "type": "object",
+      "required": ["participants", "rounds"],
+      "additionalProperties": false,
+      "properties": {
+        "participants": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 2
+        },
+        "rounds": { "type": "integer", "minimum": 1, "maximum": 50 }
+      }
+    },
+    "routeBody": {
+      "type": "object",
+      "required": ["branches"],
+      "additionalProperties": false,
+      "properties": {
+        "router":   { "type": "string", "minLength": 1 },
+        "branches": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/node" },
+          "minProperties": 1
+        },
+        "default":  { "$ref": "#/$defs/node" }
+      }
+    },
+    "switchBody": {
+      "type": "object",
+      "required": ["cases"],
+      "additionalProperties": false,
+      "properties": {
+        "on":     { "type": "string", "minLength": 1,
+                    "description": "Expression to switch on, interpolated over run state + scope (e.g. \"${verdict}\"). Defaults to the upstream phase output when unset." },
+        "cases":  {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/node" },
+          "minProperties": 1,
+          "description": "value -> branch. The first case whose normalized key equals the normalized value runs. true/false keys give a plain if-else."
+        },
+        "default": { "$ref": "#/$defs/node" }
+      }
+    },
+    "mapBody": {
+      "type": "object",
+      "required": ["over", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "over":   { "type": "string", "minLength": 1,
+                    "description": "${state_var} of an array, or an inline JSON array literal." },
+        "body":   { "$ref": "#/$defs/node" },
+        "serial": { "type": "boolean", "description": "Run items one-at-a-time instead of all-at-once." },
+        "concurrency": { "type": "integer", "minimum": 1, "description": "Cap how many items run concurrently in the parallel path (items run in batches of this size) — e.g. 3 for a pool of 3 simulators. Unset = all-at-once; ignored when serial." }
+      }
+    },
+    "inputDecl": {
+      "type": "object",
+      "required": ["name", "kind"],
+      "additionalProperties": false,
+      "description": "A typed run input. Resolved to text content and seeded as ${name} before the run starts.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$", "description": "Interpolation name — readable as ${name} in phase prompts." },
+        "kind": { "enum": ["text", "url", "jira", "confluence", "github", "file"], "description": "How to resolve the value: text = raw string; url = fetched; jira / confluence / github = fetched via the connector credential; file = extracted via the upload extractor (the same one that powers generate-from-doc). A jira input is forgiving: a key or any Jira link (board links included) fetches the issue with its attachments; a GitHub issue link or another link is fetched as such; anything else is taken as the work described in words." },
+        "required": { "type": "boolean", "description": "Refuse the run unless this input is provided. Default false." },
+        "description": { "type": "string", "description": "Shown to the user when collecting the input." }
+      }
+    },
+    "stateDecl": {
+      "type": "object",
+      "required": ["reducer"],
+      "additionalProperties": false,
+      "description": "Reducer + seed for a named state slot. Reducers:  `append` concatenates as an array;  `merge` object-spreads;  `replace` last-write-wins (same as undeclared, but explicit);  `concat` joins strings with newlines;  `increment` sums numerically.",
+      "properties": {
+        "reducer": {
+          "enum": ["append", "merge", "replace", "concat", "increment"],
+          "description": "How incoming `as:` writes combine with the slot's current value."
+        },
+        "initial": {
+          "description": "Seed value before any write. Defaults: append → [], merge → {}, increment → 0, others → undefined."
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Deployment lifecycle for an orchestration. `stage` reflects readiness (dev → staging → prod); `deprecated` marks the orchestration as obsolete (still runnable, but flagged + hidden from discovery).",
+      "properties": {
+        "stage": {
+          "enum": ["dev", "staging", "prod"],
+          "description": "Promotion stage. Defaults to `dev` when unset."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Free-form discovery tags (e.g. \"delivery\", \"qa\", \"starter\"). Drive the tag filter on the Pipelines page and template browsing; purely descriptive — no runtime effect."
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "When true, the orchestration is marked obsolete. The executor emits a `lifecycle-warning` event at run start; A2A discovery omits it from the workspace root card."
+        },
+        "deprecationReason": {
+          "type": "string",
+          "description": "Optional one-liner explaining why it was deprecated and what to use instead."
+        },
+        "errorOrchestration": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of an orchestration to run after THIS one finishes with status='error'. Receives a JSON-stringified envelope `{ failedRunId, error, lastOutput }` as its initial input. Composes with — does not replace — the per-node `onError` decorator. The error orchestration's own failures do NOT cascade (no recursive triggering)."
+        }
+      }
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "webhook" },
+            "idempotencyTtlSeconds": { "$ref": "#/$defs/idempotencyTtlSeconds" },
+            "scrub": { "$ref": "#/$defs/scrubPolicy" },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "URL segment under /api/triggers/. Posting (or GET if method=GET) to /api/triggers/<path> starts a run with the request body as initial input."
+            },
+            "method": {
+              "enum": ["GET", "POST"],
+              "description": "HTTP method to accept. Default POST."
+            },
+            "signed": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "enum": [
+                    "github",
+                    "stripe",
+                    "slack",
+                    "shopify",
+                    "linear",
+                    "gitlab",
+                    "standard-webhooks"
+                  ]
+                }
+              ],
+              "description": "Require a signature on requests to this webhook. true = sammy-pack's own scheme: X-Sammy-Signature, either t=<unix>,n=<nonce>,v1=<hex HMAC-SHA256 of \"t.n.body\"> (replay-protected) or legacy sha256=<hex HMAC-SHA256 of rawBody>. A provider name verifies that third party's own scheme instead, since no external provider sends X-Sammy-Signature: \"github\" (X-Hub-Signature-256; also Bitbucket/Jira/Gitea), \"stripe\" (Stripe-Signature, timestamped), \"slack\" (X-Slack-Signature + X-Slack-Request-Timestamp), \"shopify\" (X-Shopify-Hmac-Sha256, base64), \"linear\" (Linear-Signature), \"standard-webhooks\" (standardwebhooks.com \u2014 Svix/Resend/Clerk), or \"gitlab\" (X-Gitlab-Token \u2014 a shared token, NOT an HMAC: it signs nothing, so prefer an HMAC provider where you have the choice). The secret is always the server's SAMMY_WEBHOOK_SECRET, never committed JSON. Unsigned or mismatched requests are rejected 401 before any run starts."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "expr"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "cron" },
+            "expr": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Standard 5-field cron expression. Server-local time. Example: \"0 9 * * *\" for daily at 09:00."
+            },
+            "timezone": {
+              "type": "string",
+              "minLength": 1,
+              "description": "IANA timezone the expression is evaluated in, e.g. \"America/New_York\" or \"UTC\". Defaults to the SERVER's local zone — fine for a single-region deployment, a trap otherwise, since \"0 9 * * *\" then means a different moment depending on where the process runs. Also used for the fire's dedupe bucket, so a DST fall-back (when the local hour occurs twice) fires once rather than twice."
+            },
+            "overlap": {
+              "enum": ["skip", "queue", "allow"],
+              "description": "What to do when the PREVIOUS run of this cron is still in flight at the next tick. Default \"skip\" (drop the tick; the running one continues) — overlapping runs of one scheduled job are almost never wanted, and a fast schedule on a slow orchestration otherwise accumulates concurrent runs without bound. \"queue\" parks the tick and runs it when the previous finishes. \"allow\" disables the guard entirely. An explicit root-level `concurrency` block takes precedence over this."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "event"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "events" },
+            "idempotencyTtlSeconds": { "$ref": "#/$defs/idempotencyTtlSeconds" },
+            "scrub": { "$ref": "#/$defs/scrubPolicy" },
+            "event": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Domain event name to subscribe to, e.g. \"user.created\" or \"pr.opened\". Fire it with POST /api/events/<event>; the request body becomes the run's initial input. Multiple orchestrations may subscribe to one event."
+            },
+            "signed": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "enum": [
+                    "github",
+                    "stripe",
+                    "slack",
+                    "shopify",
+                    "linear",
+                    "gitlab",
+                    "standard-webhooks"
+                  ]
+                }
+              ],
+              "description": "Require a signature on the firing HTTP request. If ANY subscriber to this event sets it, the endpoint requires a valid signature (strictest wins); subscribers naming DIFFERENT providers are a conflict the ingress refuses, since no one request could satisfy both. Internal chain events (<orch>.done) are unaffected. true = sammy-pack's own scheme: X-Sammy-Signature, either t=<unix>,n=<nonce>,v1=<hex HMAC-SHA256 of \"t.n.body\"> (replay-protected) or legacy sha256=<hex HMAC-SHA256 of rawBody>. A provider name verifies that third party's own scheme instead, since no external provider sends X-Sammy-Signature: \"github\" (X-Hub-Signature-256; also Bitbucket/Jira/Gitea), \"stripe\" (Stripe-Signature, timestamped), \"slack\" (X-Slack-Signature + X-Slack-Request-Timestamp), \"shopify\" (X-Shopify-Hmac-Sha256, base64), \"linear\" (Linear-Signature), \"standard-webhooks\" (standardwebhooks.com \u2014 Svix/Resend/Clerk), or \"gitlab\" (X-Gitlab-Token \u2014 a shared token, NOT an HMAC: it signs nothing, so prefer an HMAC provider where you have the choice). The secret is always the server's SAMMY_WEBHOOK_SECRET, never committed JSON. Unsigned or mismatched requests are rejected 401 before any run starts."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "environment"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "deployment" },
+            "idempotencyTtlSeconds": { "$ref": "#/$defs/idempotencyTtlSeconds" },
+            "scrub": { "$ref": "#/$defs/scrubPolicy" },
+            "environment": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Environment whose deploy fires this run, e.g. \"staging\" or \"prod\" (staging deployed -> QA orchestration). Fire it with POST /api/deploy/<environment>; the request body becomes the run's initial input."
+            },
+            "signed": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "enum": [
+                    "github",
+                    "stripe",
+                    "slack",
+                    "shopify",
+                    "linear",
+                    "gitlab",
+                    "standard-webhooks"
+                  ]
+                }
+              ],
+              "description": "Require a signature on the firing HTTP request. Strictest-wins across subscribers. true = sammy-pack's own scheme: X-Sammy-Signature, either t=<unix>,n=<nonce>,v1=<hex HMAC-SHA256 of \"t.n.body\"> (replay-protected) or legacy sha256=<hex HMAC-SHA256 of rawBody>. A provider name verifies that third party's own scheme instead, since no external provider sends X-Sammy-Signature: \"github\" (X-Hub-Signature-256; also Bitbucket/Jira/Gitea), \"stripe\" (Stripe-Signature, timestamped), \"slack\" (X-Slack-Signature + X-Slack-Request-Timestamp), \"shopify\" (X-Shopify-Hmac-Sha256, base64), \"linear\" (Linear-Signature), \"standard-webhooks\" (standardwebhooks.com \u2014 Svix/Resend/Clerk), or \"gitlab\" (X-Gitlab-Token \u2014 a shared token, NOT an HMAC: it signs nothing, so prefer an HMAC provider where you have the choice). The secret is always the server's SAMMY_WEBHOOK_SECRET, never committed JSON. Unsigned or mismatched requests are rejected 401 before any run starts."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "source", "intervalSeconds"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "polling" },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "description": "URL the server fetches each tick. A run starts whenever the response body is non-empty and has changed since the previous tick; that body becomes the run's initial input."
+            },
+            "intervalSeconds": {
+              "type": "number",
+              "minimum": 1,
+              "description": "How often to poll, in seconds."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "queue"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "queue" },
+            "idempotencyTtlSeconds": { "$ref": "#/$defs/idempotencyTtlSeconds" },
+            "scrub": { "$ref": "#/$defs/scrubPolicy" },
+            "queue": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Queue name to consume; each delivered message starts a run with the message body as input. Deliver a message with POST /api/queue/<queue>."
+            },
+            "signed": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "enum": [
+                    "github",
+                    "stripe",
+                    "slack",
+                    "shopify",
+                    "linear",
+                    "gitlab",
+                    "standard-webhooks"
+                  ]
+                }
+              ],
+              "description": "Require a signature on the delivering HTTP request. Strictest-wins across subscribers. true = sammy-pack's own scheme: X-Sammy-Signature, either t=<unix>,n=<nonce>,v1=<hex HMAC-SHA256 of \"t.n.body\"> (replay-protected) or legacy sha256=<hex HMAC-SHA256 of rawBody>. A provider name verifies that third party's own scheme instead, since no external provider sends X-Sammy-Signature: \"github\" (X-Hub-Signature-256; also Bitbucket/Jira/Gitea), \"stripe\" (Stripe-Signature, timestamped), \"slack\" (X-Slack-Signature + X-Slack-Request-Timestamp), \"shopify\" (X-Shopify-Hmac-Sha256, base64), \"linear\" (Linear-Signature), \"standard-webhooks\" (standardwebhooks.com \u2014 Svix/Resend/Clerk), or \"gitlab\" (X-Gitlab-Token \u2014 a shared token, NOT an HMAC: it signs nothing, so prefer an HMAC provider where you have the choice). The secret is always the server's SAMMY_WEBHOOK_SECRET, never committed JSON. Unsigned or mismatched requests are rejected 401 before any run starts."
+            }
+          }
+        }
+      ]
+    },
+    "waitBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Durable wait leaf — the run parks at ZERO cost until a timer elapses or an external signal arrives. On a server-owned run the wait snapshots + pauses exactly like a `lock` gate (survives restarts; the server's wait sweeper resumes it when due, ~30s granularity). Exactly one of `seconds` / `until` / `signal`.",
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Durable relative timer: complete this phase N seconds after it is FIRST reached. The absolute deadline is computed once at first crossing and persisted (via the wait-started event), so restarts / early resumes never re-arm the clock."
+        },
+        "until": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Durable absolute deadline — ISO-8601 timestamp (interpolated, so ${vars.x} / an upstream ${as} value work). Already-past deadlines complete immediately with waited=false."
+        },
+        "signal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "External-signal wait (interpolated name). The run parks until POST /api/runs/{id}/signal delivers a matching `{signal, payload}`; the payload becomes this phase's output. Signals arriving BEFORE the wait is reached are buffered (durably, as signal-received events) and consumed FIFO. Requires a server-owned run (an in-memory run has no signal ingress)."
+        },
+        "timeoutSeconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Only with `signal`: fail the phase (a normal retryable phase error — flows through retry / onError / continueOnError) when the signal has not arrived after N seconds."
+        }
+      },
+      "oneOf": [
+        { "required": ["seconds"] },
+        { "required": ["until"] },
+        { "required": ["signal"] }
+      ],
+      "allOf": [
+        {
+          "if":   { "required": ["timeoutSeconds"] },
+          "then": { "required": ["signal"] }
+        }
+      ]
+    },
+    "idempotencyTtlSeconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "How long an Idempotency-Key header suppresses a repeat, in seconds (sliding, from the most recent accepted fire). Unset = forever. With a window a sender can re-raise the same key later — e.g. one triage per error group per day."
+    },
+    "scrubPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Scrub the inbound payload BEFORE it is stored or reaches a run. Order: allowFields → dropFields → hashFields → detectors/patterns on every remaining string (or on the whole body when it is not JSON). Paths are dot-separated; `*` matches any key or array index. An allowFields policy on a non-JSON body replaces the body (fail closed).",
+      "properties": {
+        "builtins": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "array", "items": { "enum": ["email", "phone", "bearer", "jwt", "secrets"] } }
+          ],
+          "description": "Built-in detectors: true / omitted = all, false = none, or a list."
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["pattern"],
+            "additionalProperties": false,
+            "properties": {
+              "pattern": { "type": "string", "minLength": 1, "description": "JavaScript regular expression source." },
+              "flags": { "type": "string", "description": "Extra regex flags; `g` is always added." },
+              "replacement": { "type": "string", "description": "Replacement text. Default [redacted]." }
+            }
+          }
+        },
+        "allowFields": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "When set, ONLY these JSON paths survive." },
+        "dropFields": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "JSON paths to remove." },
+        "hashFields": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "JSON paths whose scalar values are replaced by a salted digest (SAMMY_SCRUB_SALT) — countable, not readable. Without a salt the field is dropped instead." }
+      }
+    },
+    "orchestrationLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRunsPerDay": { "type": "integer", "minimum": 0, "description": "Trigger-fired runs this orchestration may start per day." },
+        "maxCostUsdPerDay": { "type": "number", "minimum": 0, "description": "Spend this orchestration's runs may reach per day, USD." },
+        "maxCostUsdPerMonth": { "type": "number", "minimum": 0, "description": "Spend this orchestration's runs may reach per month, USD." }
+      }
+    },
+    "httpBody": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "description": "One HTTP request as a phase — no model. The response body is the phase output. The host must be allowlisted (allowHosts here, or SAMMY_HTTP_ALLOWED_HOSTS); redirects are not followed; ${connections:<name>.<field>} refs are resolved from this template only (never from run data) and scrubbed from the output. A completed request is replayed, not re-sent, on resume.",
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "description": "Absolute http(s) URL; interpolated against run state." },
+        "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "description": "Default GET." },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Request headers; interpolated. Put credentials here via ${connections:<name>.value}." },
+        "body": {
+          "oneOf": [{ "type": "string" }, { "type": "object" }, { "type": "array" }],
+          "description": "A string is sent as-is; an object/array is JSON-encoded (string leaves interpolated; a leaf that is exactly one ${ref} receives the referenced value as-is)."
+        },
+        "allowHosts": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Hostnames this node may call (exact, or *.example.com for subdomains), in addition to SAMMY_HTTP_ALLOWED_HOSTS." },
+        "expectStatus": { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "description": "Status codes treated as success. Default: any 2xx." },
+        "timeoutSeconds": { "type": "number", "exclusiveMinimum": 0, "description": "Per-request timeout. Default 30." },
+        "maxResponseBytes": { "type": "integer", "minimum": 1, "description": "Response bytes kept as output. Default 1 MiB." },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["basic"],
+          "properties": {
+            "basic": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["username", "password"],
+              "properties": {
+                "username": { "type": "string" },
+                "password": { "type": "string" }
+              }
+            }
+          },
+          "description": "HTTP Basic auth, sent as `Authorization: Basic <base64(username:password)>` — what Jira Cloud and Bitbucket API tokens use. Both are interpolated like headers: ${connections:<name>.<field>}. The encoded value is scrubbed from output like the password. Not combinable with an Authorization header."
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["artifact"],
+            "properties": {
+              "field": { "type": "string", "minLength": 1, "description": "Form field name. Default `file`." },
+              "artifact": { "type": "string", "minLength": 1, "description": "A run artifact name (as `code.artifact` named it; the iteration-scoped name is tried first, then the bare one; one recorded before a gate is read back from the stored run)." },
+              "filename": { "type": "string", "minLength": 1, "description": "Filename sent with the part. Default <artifact>.txt." }
+            }
+          },
+          "description": "Send the request as multipart/form-data with run artifacts as file parts — e.g. attach a repro log to a ticket. An object `body` becomes text fields; do not set content-type yourself. Needs POST / PUT / PATCH."
+        }
+      }
+    },
+    "worktreeDecl": {
+      "type": "object",
+      "required": ["name", "repo"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$", "description": "Identifier used in ${worktrees.<name>.path} / .branch and the SAMMY_WORKTREE_<NAME> env var." },
+        "repo": { "type": "string", "minLength": 1, "description": "Path to a local git repository (absolute, or relative to the workspace root)." },
+        "base": { "type": "string", "minLength": 1, "description": "Ref the branch starts from. Default: the repository's current HEAD." },
+        "branch": { "type": "string", "minLength": 1, "description": "Branch name template; ${run.id}, ${run.short} (the run id's random suffix), ${orchestration}, ${worktree.name} and ${input.<field>} interpolate (characters git forbids become -). Default sammy/<run.short>-<name>. An existing branch is checked out and continued — so a payload-derived part can name any existing branch under the template's literal prefix; keep that prefix specific to this automation." },
+        "cleanup": { "enum": ["remove", "keep", "always-remove"], "description": "remove (default): delete the worktree when the run succeeds or is cancelled (including a cancel while paused at a gate), keep it for inspection on error — DETACHED from its branch, so a later run can check the branch out; keep: never delete (also detached at the end); always-remove: delete whatever happened. A branch this run created with no commits beyond base is deleted with its worktree." }
+      }
+    },
+    "codeBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Non-LLM transform. Provide EITHER `source` (inline JS, run in a vm sandbox with no ambient I/O) OR `run` (an external shell command, opt-in only). For deterministic reshaping between agents — parse JSON, filter arrays, slice strings — without an LLM call.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Inline JavaScript (mutually exclusive with `run`). Runs in a vm context with NO ambient I/O — only `input` (string), `state`, `item` + `index` (inside `map`), `vars`, and the JS built-ins are in scope (no require/process/fetch/network/fs). `return` a value (objects are JSON-stringified). CPU-bounded by sandbox.maxRunSeconds, output by sandbox.maxOutputBytes. Example: `return JSON.parse(input).items.map(i => i.title).join('\\n');`."
+        },
+        "run": {
+          "type": "string",
+          "minLength": 1,
+          "description": "External command. DISABLED unless SAMMY_ALLOW_CODE_RUN=1 (any command, through a shell) or SAMMY_CODE_RUN_ALLOW lists patterns it matches (then run WITHOUT a shell — `;`, `&&`, `$(…)` are literal arguments). Prefer an agent with the Bash tool (governed by the sandbox policy) for open-ended work. Upstream output → stdin; stdout → this phase's output; non-zero exit → phase error. With exactly one root `worktrees` entry it runs inside that worktree."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "With `run`: the working directory — interpolated (${worktrees.<name>.path}/sub, or relative to the run's single worktree) and required to lie inside one of the run's root `worktrees` (real paths, so a symlink cannot lead out). For runs that declare several worktrees, where there is no default."
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1,
+          "description": "With `run`: keep the command's full log (stdout, stderr, exit) as a named run artifact — GET /api/runs/{id}/artifacts?name=<artifact> — on failure as well as success. Bounded to its tail (SAMMY_ARTIFACT_MAX_BYTES, default 256 KiB) and scrubbed of secrets."
+        }
+      },
+      "oneOf": [{ "required": ["source"] }, { "required": ["run"] }]
+    },
+    "a2aBody": {
+      "type": "object",
+      "required": ["agentCard"],
+      "additionalProperties": false,
+      "description": "Outbound A2A call. Dispatches this phase to a remote agent that speaks the A2A (Agent2Agent) protocol: the executor fetches the agent card, submits the upstream phase output as an A2A task, polls the task to completion, and folds the result artifact in as this phase's output. Honors timeout / retry / cancellation like any other leaf.",
+      "properties": {
+        "agentCard": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URL of the remote agent's A2A agent card — typically a .../.well-known/agent-card.json or .../agent-card.json document. The card's `url` field is the JSON-RPC endpoint the task is sent to."
+        },
+        "skill": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional skill id from the remote card to invoke. Recorded on the outbound message metadata; the remote agent decides how to honor it."
+        }
+      }
+    },
+    "retryPolicy": {
+      "type": "object",
+      "required": ["times"],
+      "additionalProperties": false,
+      "properties": {
+        "times":     { "type": "integer", "minimum": 1, "maximum": 20 },
+        "backoff":   { "enum": ["fixed", "exponential"] },
+        "initialMs": { "type": "integer", "minimum": 0, "maximum": 60000 }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["maxTokens"] },
+        { "required": ["maxCostUsd"] }
+      ],
+      "properties": {
+        "maxTokens":  { "type": "integer", "minimum": 1 },
+        "maxCostUsd": { "type": "number",  "exclusiveMinimum": 0 }
+      }
+    },
+    "onStallPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recover"],
+      "description": "Stall -> recovery hook. When the stall watchdog aborts this node (no progress within `stallTimeout`), run the `recover` phase for its side effect and then RE-RUN the stalled node, up to `maxRetries` times, instead of letting the stall abort the run. Distinct from `retry` (re-attempt with no fix-up) and `onError` (replace the node with a recovery branch's output): `onStall` runs a fix-up, then re-runs the ACTUAL node. Only the stall watchdog triggers it; a hard timeout / generic error flows through retry / onError.",
+      "properties": {
+        "recover":    { "$ref": "#/$defs/node",
+                        "description": "Recovery phase run when the node stalls — a normal node body (code / agent / prompt). ${error.message} (the stall message) is in scope, like an onError branch. Its output is NOT the node's output; it runs purely for its side effect (e.g. kill + relaunch a wedged dependency), after which the original node is re-run." },
+        "maxRetries": { "type": "integer", "minimum": 0,
+                        "description": "How many times to recover-and-re-run before giving up and aborting the run with the stall. Default 1. 0 disables recovery (a stall aborts immediately — same as no onStall)." }
+      }
+    },
+    "orchestrationDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Run-wide fallbacks for per-node resource limits. Each field supplies the value a node uses when it omits its own setting. Resolution is strictly node.X ?? defaults.X ?? <env / built-in default> — a per-node value always wins, and an omitted field changes nothing. Read only off the orchestration root node.",
+      "properties": {
+        "timeout":        { "type": "number",  "exclusiveMinimum": 0,
+                            "description": "Default per-node wallclock timeout (seconds) for nodes that omit their own `timeout`. Falls back to DEFAULT_NODE_TIMEOUT_SEC (~1800s, env SAMMY_DEFAULT_NODE_TIMEOUT_SEC) when unset." },
+        "stallTimeout":   { "type": "number",  "exclusiveMinimum": 0,
+                            "description": "Default per-node stall watchdog (seconds) for nodes that omit their own `stallTimeout`. Falls back to DEFAULT_STALL_TIMEOUT_SEC (~420s, env SAMMY_DEFAULT_STALL_TIMEOUT_SEC) when unset." },
+        "maxAgentTokens": { "type": "integer", "minimum": 1,
+                            "description": "Default per-leaf agent token ceiling for leaf agents that omit their own `maxAgentTokens`. Falls back to SAMMY_MAX_AGENT_TOKENS / the built-in default when unset." }
+      }
+    },
+    "orchestrationConcurrency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group"],
+      "description": "Mutual exclusion for runs that share an external resource. Runs whose root declares the same `group` never run concurrently. The group is an OPAQUE token — the framework knows nothing about what it represents. Read only off the orchestration root node.",
+      "properties": {
+        "group":  { "type": "string", "minLength": 1,
+                    "description": "Opaque mutual-exclusion key. Runs sharing this string are never started while another run in the group is active (running/paused)." },
+        "policy": { "enum": ["skip", "queue", "cancel-existing"],
+                    "description": "What a fire does when the group is busy: `skip` drops it; `queue` (default) parks it on the durable pending-fire queue to start when the active run finishes; `cancel-existing` cancels the active run(s) then starts. Defaults to `queue`." }
+      }
+    },
+    "notifyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Outbound notification on run terminal (orchestration root only). A server-boundary feature fired from the run's terminal hook — the executor itself ignores it.",
+      "properties": {
+        "onGate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URL the server POSTs to the moment a run stops at an approval gate (`lock`), for every gate it reaches. The envelope { type: \"gate\", runId, orchestration, gate, text, summary?, appUrl?, runUrl? } carries `text` so a Slack / Teams incoming webhook renders it as-is; appUrl / runUrl are set when SAMMY_PUBLIC_URL is. A timed `wait` pause does not fire it. Best-effort, like onTerminal."
+        },
+        "onTerminal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URL the server POSTs a small JSON envelope { runId, orchestration, status, summary? } to when the run reaches a terminal status (done / error / cancelled / paused). Best-effort + fire-and-forget: a slow / dead endpoint never blocks or fails the run; webhook errors are swallowed. Opaque sink (Slack incoming webhook, an internal collector, …)."
+        },
+  "divergence": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "Run-level retry-storm watchdog tuning (read at run start; the run-controller buckets leaf phase repeats by scoped replayKey and flags a thrashing run). Omit for the default WARN-only behavior at the default threshold.",
+   "properties": {
+    "repeatThreshold": { "type": "integer", "minimum": 2, "description": "Repeat count at which a single phase instance is flagged (values < 2 clamp to 2)." },
+    "abort":           { "type": "boolean", "description": "When true, a diverged run is ABORTED mid-flight instead of merely flagged via the run-divergence verdict. Default false (warn-only), so enabling the watchdog never fails a previously-completing run." }
+   }
+  }
+      }
+    },
+    "schemaRef": {
+      "description": "Runtime-enforced I/O contract (subset validator: type/properties/required/items/enum/const/min-max/pattern/anyOf/oneOf). For NARRATIVE outputs, {\"type\":\"string\",\"pattern\":\"## Converged board\"} fails the phase fast when an agent ships a partial result (e.g. ends its turn with work still in flight) instead of propagating it downstream.",
+      "oneOf": [
+        { "type": "string", "description": "JSON Pointer or file path to a JSON Schema" },
+        { "type": "object", "description": "Inline JSON Schema" }
+      ]
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Execution-safety policy. A node's effective policy is its own sandbox merged with every ancestor's — children may only TIGHTEN (intersect tool allowlists, union command denylists), never widen.",
+      "properties": {
+        "allowedTools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Allowlist of Claude Code built-in tools (Bash, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch). An agent's declared tools[] are intersected with this — anything not listed is stripped before dispatch. Omit for no tool cap."
+        },
+        "deniedCommands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Substrings that, if found in a Bash tool call's command, get that call refused before it runs (server runs; the agent is told why and carries on) — or, without that support, fail the phase. Use for blast-radius limits ('git push --force', 'sudo', ':(){', 'curl | sh'); keep them specific, since matching is by case-insensitive substring."
+        },
+        "networkAccess": {
+          "type": "boolean",
+          "description": "When false, network-capable tools (WebFetch, WebSearch) are stripped from the effective tool set. Default true."
+        },
+        "permissionMode": {
+          "enum": ["bypassPermissions", "acceptEdits", "plan", "default"],
+          "description": "SDK permission mode floor for this subtree. 'plan' is read-only (no edits, no shell). When both a node's own permissionMode and a sandbox.permissionMode are set, the more restrictive wins."
+        },
+        "maxRunSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Wall-clock cap for a `code` node, in seconds. A vm watchdog interrupts synchronous CPU loops (which a phase `timeout` can't); a host-side race bounds async hangs. Merges to the stricter (smaller) value. Default 5."
+        },
+        "maxOutputBytes": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Cap on a `code` node's output size, in bytes; larger output fails the phase. Merges to the stricter (smaller) value. Default 1048576 (1 MiB)."
+        },
+        "maxFanout": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Cap on a `map` node's fan-out (item count). The array can be LLM-determined, so an unbounded map is an unbounded blast radius; over the cap fails the phase. Merges to the stricter (smaller) value. Default 1000."
+        }
+      }
+    }
+  }
+}

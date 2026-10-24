@@ -1,0 +1,33 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "fanout-summarize",
+  "description": "Summarize a list of documents in parallel using map. Each item is available inside the body as ${item}, position as ${index}.",
+  "lifecycle": { "tags": ["starter", "fan-out"] },
+  "phases": [
+    {
+      "name": "load-list",
+      "agent": "agents/pm.md",
+      "description": "Should produce a JSON array of {id, title, text}. Stored as ${docs}.",
+      "as": "docs"
+    },
+    {
+      "name": "summarize-each",
+      "map": {
+        "over": "${docs}",
+        "body": {
+          "name": "summarize",
+          "agent": "agents/summarizer.md",
+          "description": "Summarize ${item.text} into <= 100 words. Doc index: ${index}.",
+          "retry": { "times": 2 }
+        }
+      },
+      "as": "summaries",
+      "budget": { "maxCostUsd": 2.0 }
+    },
+    {
+      "name": "compile-digest",
+      "agent": "agents/digest-writer.md",
+      "description": "Compile the ${summaries} into a one-page digest."
+    }
+  ]
+}

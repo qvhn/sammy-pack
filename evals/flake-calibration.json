@@ -1,0 +1,11 @@
+{
+  "name": "flake-calibration",
+  "description": "Calibration eval for judge-flake. Runs flake-classify against the labeled flake-calibration dataset and scores the emitted branch EXACTLY against the human adjudication. Pass rate = adjudication accuracy; the per-row drilldown shows exactly which reds the judge mis-calls (and in which direction — burning repair loops on flakes vs. dismissing real regressions), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start.",
+  "orchestrationName": "flake-classify",
+  "datasetName": "flake-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000
+}

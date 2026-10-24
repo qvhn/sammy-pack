@@ -1,0 +1,53 @@
+{
+  "name": "@sammy-pack/queue-service",
+  "version": "0.1.0-alpha.0",
+  "description": "Broker-agnostic connector runtime for sammy-pack queue sources. Hosts registered QueueSource adapters and manages their consume-loop lifecycle from a declarative `sources` binding, resolving broker secrets via the credential registry. Depends on @sammy-pack/sdk only \u2014 never a broker SDK.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "sammy-queue-service": "dist/bin/run.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "sammy-pack",
+    "queue",
+    "connector",
+    "runtime",
+    "adapter",
+    "broker",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qvhn/sammy-pack.git",
+    "directory": "app/packages/queue-service"
+  },
+  "dependencies": {
+    "@sammy-pack/sdk": "0.1.0-alpha.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0"
+  },
+  "bugs": {
+    "url": "https://github.com/qvhn/sammy-pack/issues"
+  },
+  "homepage": "https://github.com/qvhn/sammy-pack#readme"
+}

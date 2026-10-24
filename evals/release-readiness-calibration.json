@@ -1,0 +1,11 @@
+{
+  "name": "release-readiness-calibration",
+  "description": "Calibration eval for judge-release-readiness. Runs release-readiness-classify against the labeled release-readiness-calibration dataset and scores the emitted verdict EXACTLY against the human label. Pass rate = go/no-go accuracy; the per-row drilldown shows exactly which releases the judge mis-calls (and in which direction — shipping on gappy evidence vs. holding well-evidenced releases), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start.",
+  "orchestrationName": "release-readiness-classify",
+  "datasetName": "release-readiness-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000
+}

@@ -1,0 +1,32 @@
+{
+  "name": "quickstart-summarize",
+  "description": "Starter dataset for trying the summarizer pipeline + the judge-completeness scorer. Each row is a long-ish input and an expected 1-sentence summary.",
+  "createdAt": 1779100000000,
+  "updatedAt": 1779100000000,
+  "rows": [
+    {
+      "id": "row-1",
+      "input": "The fall release introduces partial-stream control, a refactored permission model that defaults to ask-then-cache, and three new built-in tools (Glob, Grep, WebFetch). Existing settings.json files continue to work; the deprecation warning for the old permission shape lands in the next minor.",
+      "expectedOutput": "Fall release adds partial-stream control, a new ask-then-cache permission model, and Glob/Grep/WebFetch tools — old settings keep working.",
+      "tags": ["train"]
+    },
+    {
+      "id": "row-2",
+      "input": "After the migration the p95 latency on /api/runs dropped from 3.2s to 480ms, almost all of the improvement coming from the new range-index on (orchestration_name, started_at desc) and from moving the events-array read off the hot path.",
+      "expectedOutput": "Migration cut /api/runs p95 latency from 3.2s to 480ms, mostly thanks to a new range-index and moving events read off the hot path.",
+      "tags": ["train"]
+    },
+    {
+      "id": "row-3",
+      "input": "We're freezing all non-critical merges Thursday for the mobile release cut. Backend changes that don't touch the iOS-facing endpoints can still go in; any schema or auth change needs sign-off from both the mobile lead and the on-call SRE before Friday end-of-day.",
+      "expectedOutput": "Non-critical merges freeze Thursday for mobile release cut; backend changes that don't touch iOS endpoints are still fine, but any schema/auth change needs mobile-lead + on-call SRE sign-off by Friday EOD.",
+      "tags": ["regression"]
+    },
+    {
+      "id": "row-4",
+      "input": "The incident root cause: a connector retry loop that didn't honor the rate-limit backoff header, multiplied across 12 tenants on a shared upstream, eventually triggering the upstream's circuit breaker and cascading to every downstream feature that depended on it.",
+      "expectedOutput": "Root cause: connector retry loop ignored the rate-limit backoff header, fanned out across 12 tenants on a shared upstream, tripped the upstream's circuit breaker, and cascaded to every dependent feature.",
+      "tags": ["regression", "incident"]
+    }
+  ]
+}

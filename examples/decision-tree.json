@@ -1,0 +1,33 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "decision-tree",
+  "description": "Router agent classifies the input, then runs the matching branch. Showcases route + default + per-branch retry.",
+  "lifecycle": { "tags": ["starter", "routing"] },
+  "phases": [
+    {
+      "name": "triage",
+      "route": {
+        "router": "agents/router.md",
+        "branches": {
+          "bug": {
+            "name": "fix",
+            "agent": "agents/dev.md",
+            "retry": { "times": 2, "backoff": "exponential", "initialMs": 1000 }
+          },
+          "feature": {
+            "name": "plan",
+            "agent": "agents/dev-lead.md"
+          },
+          "design": {
+            "name": "design",
+            "agent": "agents/uxui.md"
+          }
+        },
+        "default": {
+          "name": "escalate",
+          "agent": "agents/escalate.md"
+        }
+      }
+    }
+  ]
+}

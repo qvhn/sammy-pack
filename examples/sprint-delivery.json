@@ -1,0 +1,333 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "sprint-delivery",
+  "description": "Work a sprint validation-first AND end-to-start. DISCOVER going down: test STAGE (the exact deployed build, pointed at the deployed backend) and capture what needs implementing, then test DEV (dev branch built on the simulator, dev backend) and capture more — combine those findings with the planned TODO tickets into one work-list. IMPLEMENT locally: per ticket, reproduce → confirm it's real (judge-reproducibility) — unconfirmed tickets bounce before any code — → implement→verify in a bounded loop (judge-convergence). INTEGRATE going back up: merge to dev, re-test dev, then a HUMAN go/no-go before a canary deploy that re-tests stage against the freshly deployed build, with auto-rollback. The READ-ONLY QA (testing each environment across components, and the blast-radius sweep) fans out in parallel capped at a pool of 3 (sims/workers) via map concurrency; the IMPLEMENT step stays serial (parallel file-edits on one working tree would conflict). The environment-adapter switches branch/build/backend for each layer so every test hits the right thing.",
+  "lifecycle": {
+    "tags": [
+      "delivery"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "todoTickets",
+      "kind": "text",
+      "required": false,
+      "description": "The planned sprint tickets (the TODO list). Combined with what testing stage + dev surfaces to form the work-list. Empty = work only what the environment testing finds."
+    }
+  ],
+  "vars": {
+    "components": "[\"auth\", \"checkout\", \"messages\", \"notifications\"]"
+  },
+  "phases": [
+    {
+      "name": "discover-stage",
+      "description": "Test the HIGHEST environment first — stage, exactly as users will hit it.",
+      "phases": [
+        {
+          "name": "prep-stage",
+          "agent": "agents/environment-adapter.md",
+          "prompt": "Prepare TARGET stage: use the EXACT build currently deployed (the same artifact shipped via the release/Xcode process — do not rebuild from source) and point the client at the deployed stage backend."
+        },
+        {
+          "name": "test-stage",
+          "as": "stageFindings",
+          "description": "Test each component on the deployed stage build/backend IN PARALLEL, capped to a pool of 3 (sims/workers). Read-only QA — safe to parallelize.",
+          "map": {
+            "over": "${components}",
+            "concurrency": 3,
+            "body": {
+              "name": "qa-stage-component",
+              "agent": "agents/qa-runner.md",
+              "prompt": "Run QA + the key journeys for the ${item} component on STAGE (deployed build, deployed backend). List every defect or gap that needs implementation, most severe first."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "discover-dev",
+      "description": "Then the dev branch, built on the simulator against the dev backend.",
+      "phases": [
+        {
+          "name": "prep-dev",
+          "agent": "agents/environment-adapter.md",
+          "prompt": "Prepare TARGET dev: check out the dev branch, build it on the simulator, and point the client at the dev backend."
+        },
+        {
+          "name": "test-dev",
+          "as": "devFindings",
+          "description": "Test each component on the dev build IN PARALLEL, capped to a pool of 3 (sims/workers).",
+          "map": {
+            "over": "${components}",
+            "concurrency": 3,
+            "body": {
+              "name": "qa-dev-component",
+              "agent": "agents/qa-runner.md",
+              "prompt": "Run QA for the ${item} component on the DEV build (dev branch on the simulator, dev backend). List every defect or gap, most severe first."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "assemble-worklist",
+      "agent": "agents/dev-lead.md",
+      "as": "worklistRaw",
+      "description": "Combine what stage + dev testing surfaced with the planned TODO tickets into one deduplicated work-list.",
+      "prompt": "Combine the STAGE findings, the DEV findings, and the planned TODO tickets into ONE deduplicated work-list, most-broken first. Output ONLY a JSON array of short ticket strings (no prose, no code fences).\n\nSTAGE FINDINGS:\n${stageFindings}\n\nDEV FINDINGS:\n${devFindings}\n\nTODO TICKETS:\n${todoTickets}"
+    },
+    {
+      "name": "deliver-local",
+      "description": "Switch to a local working branch, then work each ticket: reproduce → confirm → implement→verify.",
+      "phases": [
+        {
+          "name": "prep-local",
+          "agent": "agents/environment-adapter.md",
+          "prompt": "Prepare TARGET local: cut a working branch off dev, build locally, point at the dev (or local) backend."
+        },
+        {
+          "name": "extract-worklist",
+          "as": "worklist",
+          "description": "Robustly pull the JSON array out of the planner's reply (tolerant of prose/fences) so the map can iterate it.",
+          "code": {
+            "source": "const raw = String(state.worklistRaw || ''); const m = raw.match(/\\[[\\s\\S]*\\]/); if (!m) return '[]'; try { return JSON.stringify(JSON.parse(m[0])); } catch { return '[]'; }"
+          }
+        },
+        {
+          "name": "work-tickets",
+          "as": "ticketOutcomes",
+          "map": {
+            "over": "${worklist}",
+            "serial": true,
+            "body": {
+              "name": "deliver-one",
+              "budget": {
+                "maxCostUsd": 8
+              },
+              "phases": [
+                {
+                  "name": "reproduce",
+                  "agent": "agents/qa-runner.md",
+                  "description": "Reproduce the ticket's reported behavior locally before spending fix effort.",
+                  "prompt": "Attempt to reproduce the reported issue in this ticket locally. Report whether the behavior actually occurs, with evidence.\n\nTICKET:\n${item}"
+                },
+                {
+                  "name": "confirm-gate",
+                  "description": "Only CONFIRMED defects proceed to implementation; the rest bounce out before any code is written.",
+                  "route": {
+                    "router": "agents/judge-reproducibility.md",
+                    "branches": {
+                      "confirmed": {
+                        "name": "implement",
+                        "description": "Reproduced → fix it, looping until QA passes or judge-convergence calls it (oscillating/stalled tickets stop and escalate).",
+                        "loop": {
+                          "body": {
+                            "name": "attempt",
+                            "phases": [
+                              {
+                                "name": "fix",
+                                "agent": "agents/dev.md",
+                                "prompt": "Implement a fix for this confirmed defect on the local working branch.\n\nTICKET:\n${item}\n\nREPRODUCTION EVIDENCE:\n${input}"
+                              },
+                              {
+                                "name": "verify",
+                                "agent": "agents/qa-runner.md",
+                                "prompt": "Verify the fix resolves the ticket and introduces no obvious regression.\n\nTICKET:\n${item}"
+                              }
+                            ]
+                          },
+                          "maxIterations": 3,
+                          "judge": "agents/judge-convergence.md"
+                        }
+                      },
+                      "cannot-reproduce": {
+                        "name": "bounce-back",
+                        "agent": "agents/writer.md",
+                        "description": "Couldn't reproduce — request steps from the reporter. Do NOT implement.",
+                        "prompt": "QA could not reproduce this ticket locally. Draft a concise, friendly request to the reporter for exact repro steps, environment, and a screenshot/recording.\n\nTICKET:\n${item}\n\nWHAT QA TRIED:\n${input}"
+                      },
+                      "inconclusive": {
+                        "name": "human-triage",
+                        "description": "Ambiguous reproduction — a human decides whether to implement or bounce.",
+                        "lock": true,
+                        "agent": "agents/pm.md"
+                      }
+                    },
+                    "default": {
+                      "name": "human-triage-default",
+                      "lock": true,
+                      "agent": "agents/pm.md"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "merge-dev",
+      "agent": "agents/github-adapter.md",
+      "tools": [
+        "github"
+      ],
+      "description": "Merge the confirmed-and-fixed tickets to the dev branch (reversible — no human gate here)."
+    },
+    {
+      "name": "retest-dev",
+      "description": "Go back UP: re-test dev with the fixes integrated, against the dev backend.",
+      "phases": [
+        {
+          "name": "prep-dev-again",
+          "agent": "agents/environment-adapter.md",
+          "prompt": "Prepare TARGET dev: rebuild the dev branch (now with the merged fixes) on the simulator, dev backend."
+        },
+        {
+          "name": "qa-dev-again",
+          "as": "devRetest",
+          "description": "Re-run QA across components on the integrated dev build IN PARALLEL (pool of 3) — the blast-radius sweep after merge.",
+          "map": {
+            "over": "${components}",
+            "concurrency": 3,
+            "body": {
+              "name": "retest-component",
+              "agent": "agents/qa-runner.md",
+              "prompt": "Re-run QA for the ${item} component on the integrated DEV build (with the merged fixes). Confirm the fixed tickets pass and nothing in ${item} regressed."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "promote-to-stage",
+      "description": "After the dev retest, gate on dev being green: merge dev into the stage branch, BUILD the stage app on the simulators, then QA that freshly built stage build. Only a green dev promotes; a red/unclear dev holds for a human before any merge to stage.",
+      "route": {
+        "router": "agents/judge-release-readiness.md",
+        "branches": {
+          "ship": {
+            "name": "stage-promotion",
+            "description": "Dev tests passed — promote to the stage line.",
+            "phases": [
+              {
+                "name": "merge-to-stage",
+                "agent": "agents/github-adapter.md",
+                "tools": [
+                  "github"
+                ],
+                "description": "Dev is green — merge the dev branch into the stage branch (the promotion to the stage line)."
+              },
+              {
+                "name": "build-stage-on-sims",
+                "agent": "agents/environment-adapter.md",
+                "prompt": "Prepare TARGET stage: check out the stage branch (now carrying the merged dev fixes) and BUILD it on the simulators, pointed at the deployed stage backend."
+              },
+              {
+                "name": "test-stage-build",
+                "as": "stageBuildFindings",
+                "description": "QA each component on the freshly built stage app on the simulators IN PARALLEL (pool of 3) — confirm the merged fixes hold on the real stage build before the release gate.",
+                "map": {
+                  "over": "${components}",
+                  "concurrency": 3,
+                  "body": {
+                    "name": "qa-stage-built-component",
+                    "agent": "agents/qa-runner.md",
+                    "prompt": "Run QA + key journeys for the ${item} component on the freshly BUILT STAGE app (stage branch built on the simulator, stage backend). Confirm the merged fixes hold and nothing regressed; list any defect most-severe first."
+                  }
+                }
+              }
+            ]
+          },
+          "hold": {
+            "name": "hold-before-stage",
+            "agent": "agents/pm.md",
+            "lock": true,
+            "description": "Dev retest not green — a human reviews before any merge to stage."
+          }
+        },
+        "default": {
+          "name": "hold-before-stage-default",
+          "agent": "agents/pm.md",
+          "lock": true,
+          "description": "Unclear dev health — hold before merging to stage."
+        }
+      }
+    },
+    {
+      "name": "release-readiness",
+      "description": "Compile the evidence into a go/no-go. The irreversible boundary is next — be skeptical.",
+      "route": {
+        "router": "agents/judge-release-readiness.md",
+        "branches": {
+          "ship": {
+            "name": "ship-to-stage-then-prod",
+            "phases": [
+              {
+                "name": "human-approval",
+                "agent": "agents/judge-release-readiness.md",
+                "lock": true,
+                "description": "HITL gate: a human reads the readiness report and approves the deploy before anything irreversible runs."
+              },
+              {
+                "name": "deploy-canary",
+                "agent": "agents/deploy-adapter.md",
+                "tools": [
+                  "deploy"
+                ],
+                "description": "Deploy the integrated build to stage/prod as a canary (this becomes the new 'exact deployed build')."
+              },
+              {
+                "name": "retest-stage",
+                "agent": "agents/qa-runner.md",
+                "as": "stageRetest",
+                "description": "Re-test stage against the freshly deployed build + deployed backend — close the end-to-start loop.",
+                "prompt": "Re-test STAGE against the just-deployed canary build and the deployed backend. Report health: do the fixed tickets hold and do the key journeys pass?"
+              },
+              {
+                "name": "canary-decision",
+                "description": "Healthy → promote; regressed → automatic rollback.",
+                "route": {
+                  "router": "agents/router.md",
+                  "branches": {
+                    "promote": {
+                      "name": "complete-rollout",
+                      "agent": "agents/summarizer.md",
+                      "description": "Canary healthy — record the release; rollout stands."
+                    },
+                    "rollback": {
+                      "name": "auto-rollback",
+                      "agent": "agents/deploy-adapter.md",
+                      "tools": [
+                        "deploy"
+                      ],
+                      "description": "Canary regressed — roll back to last-known-good automatically."
+                    }
+                  },
+                  "default": {
+                    "name": "rollback-default",
+                    "agent": "agents/deploy-adapter.md",
+                    "tools": [
+                      "deploy"
+                    ],
+                    "description": "Unclear canary health — fail safe and roll back."
+                  }
+                }
+              }
+            ]
+          },
+          "hold": {
+            "name": "hold-release",
+            "agent": "agents/pm.md",
+            "lock": true,
+            "description": "Not ready — a human reviews the blockers before any retry."
+          }
+        },
+        "default": {
+          "name": "hold-default",
+          "agent": "agents/pm.md",
+          "lock": true
+        }
+      }
+    }
+  ]
+}

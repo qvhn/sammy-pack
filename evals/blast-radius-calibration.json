@@ -1,0 +1,11 @@
+{
+  "name": "blast-radius-calibration",
+  "description": "Calibration eval for judge-blast-radius. Runs blast-radius-classify against the labeled blast-radius-calibration dataset and scores the emitted radius EXACTLY against the human label. Pass rate = scoping accuracy; the per-row drilldown shows exactly which changes the judge mis-scopes (and in which direction — under-scoping misses regressions, over-scoping wastes the QA budget), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start.",
+  "orchestrationName": "blast-radius-classify",
+  "datasetName": "blast-radius-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000
+}

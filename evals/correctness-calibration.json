@@ -1,0 +1,11 @@
+{
+  "name": "correctness-calibration",
+  "description": "Calibration eval for judge-correctness. Runs correctness-classify against the labeled correctness-calibration dataset and scores the emitted verdict EXACTLY against the human label. Pass rate = verdict accuracy; the per-row drilldown shows exactly which pairs the judge mis-calls (and in which direction — over-strict on paraphrases vs. over-lenient on fluent contradictions), which is what you tune the rubric against. Run it from the Evals page, or replay the dataset through /api/runs/start.",
+  "orchestrationName": "correctness-classify",
+  "datasetName": "correctness-calibration",
+  "scorers": [
+    { "type": "exact" }
+  ],
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000
+}

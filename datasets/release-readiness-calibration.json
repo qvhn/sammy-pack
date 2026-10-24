@@ -1,0 +1,152 @@
+{
+  "name": "release-readiness-calibration",
+  "description": "Labeled release-evidence summaries for calibrating judge-release-readiness. Each row is the accumulated validation evidence at the go/no-go boundary; expectedOutput is the human verdict (ship/hold). Traps included both ways: releases with a visible red that is properly adjudicated flaky (ship), noisy-but-clean releases full of warnings (ship), and all-green checklists hiding an uncovered wide blast radius, an unconfirmed flake, or an unreviewed irreversible step (hold). Run via the release-readiness-calibration eval (exact scorer).",
+  "createdAt": 1781136000000,
+  "updatedAt": 1781136000000,
+  "rows": [
+    {
+      "id": "rr-1",
+      "input": "Release: 3 tickets. Per-ticket QA green. Blast radius judged wide, so the full regression suite plus two end-to-end journeys ran in staging — all green. One red check was re-run 5 times, confirmed flaky, and quarantined with a tracking ticket. No open risks.",
+      "expectedOutput": "ship",
+      "tags": ["full-evidence"]
+    },
+    {
+      "id": "rr-2",
+      "input": "Release: a copy change to the billing settings empty state. Blast radius isolated; unit and visual checks green; no migrations, no API changes.",
+      "expectedOutput": "ship",
+      "tags": ["small-change"]
+    },
+    {
+      "id": "rr-3",
+      "input": "All validation green except one red: search_suggest_test. It was adjudicated flaky — passed 6 of 6 re-runs, the failure only reproduces under parallel workers, and it is quarantined with ticket QA-412. Everything else green, including the search end-to-end journey.",
+      "expectedOutput": "ship",
+      "tags": ["adjudicated-flake", "borderline"]
+    },
+    {
+      "id": "rr-4",
+      "input": "The new recommendation engine ships dark behind a feature flag verified OFF in the production config. Unit and integration suites green; the flag-off path is exercised by the smoke suite; rollback is flipping the flag.",
+      "expectedOutput": "ship",
+      "tags": ["dark-launch"]
+    },
+    {
+      "id": "rr-5",
+      "input": "Hotfix: a one-line null check. The regression test written from the crash report went red-to-green; the deterministic repro no longer crashes; the smoke suite is green; a 30-minute staging canary showed zero errors.",
+      "expectedOutput": "ship",
+      "tags": ["hotfix"]
+    },
+    {
+      "id": "rr-6",
+      "input": "Security patch bump of one dependency. Full suite green, contract tests against staging green, no public API surface change, changelog reviewed.",
+      "expectedOutput": "ship",
+      "tags": ["dependency"]
+    },
+    {
+      "id": "rr-7",
+      "input": "Validation is green across unit, integration, and both end-to-end journeys. The review notes contain 9 nice-to-have comments and the build logged 22 deprecation warnings; the reviewer approved with non-blocking comments only.",
+      "expectedOutput": "ship",
+      "tags": ["noise", "borderline"]
+    },
+    {
+      "id": "rr-8",
+      "input": "Includes a migration — an additive nullable column only. It was applied to a staging clone of production data without errors; the rollback script was executed and verified; the suite is green.",
+      "expectedOutput": "ship",
+      "tags": ["migration"]
+    },
+    {
+      "id": "rr-9",
+      "input": "Large batch: 12 tickets. Every ticket's QA is green; cross-component journeys green; the two flaky calls were each confirmed flaky with 5x re-runs; performance is within budget; on-call is briefed with the rollback plan.",
+      "expectedOutput": "ship",
+      "tags": ["large-batch"]
+    },
+    {
+      "id": "rr-10",
+      "input": "Coverage dropped 0.4% this release — traced to the deletion of dead code along with its tests. All acceptance, regression, and journey suites are green; no unresolved failures; the blast-radius scope was fully re-tested.",
+      "expectedOutput": "ship",
+      "tags": ["explained-dip", "borderline"]
+    },
+    {
+      "id": "rr-11",
+      "input": "UI-only change: visual diffs approved by design; end-to-end flows green on desktop and mobile breakpoints; zero backend deltas confirmed by the diff.",
+      "expectedOutput": "ship",
+      "tags": ["ui-only"]
+    },
+    {
+      "id": "rr-12",
+      "input": "RC2, cut after RC1's single failure (timezone handling) was fixed. The full validation pipeline re-ran end-to-end on RC2: green across unit, integration, journeys, and the targeted timezone regression test.",
+      "expectedOutput": "ship",
+      "tags": ["rc-recut"]
+    },
+    {
+      "id": "rr-13",
+      "input": "All unit tests green, but the payment end-to-end journey is red with an unexplained 500 at the confirm step. No investigation yet.",
+      "expectedOutput": "hold",
+      "tags": ["unresolved-failure"]
+    },
+    {
+      "id": "rr-14",
+      "input": "Every executed check is green. However, the blast radius was judged wide (a shared session-store rewrite) and only the auth component was re-tested — no cross-component or journey coverage ran.",
+      "expectedOutput": "hold",
+      "tags": ["coverage-gap", "borderline"]
+    },
+    {
+      "id": "rr-15",
+      "input": "One red test passed when re-run a single time. No further re-runs, no quarantine, no ticket — and the test covers the module this release changes.",
+      "expectedOutput": "hold",
+      "tags": ["unconfirmed-flake"]
+    },
+    {
+      "id": "rr-16",
+      "input": "The release includes a migration that drops the legacy_address column. There is no rollback script, and the migration has not been run against staging.",
+      "expectedOutput": "hold",
+      "tags": ["migration-risk"]
+    },
+    {
+      "id": "rr-17",
+      "input": "QA is green except two failures in auth token refresh, marked 'minor, will fix later' with no tickets filed and no flake adjudication.",
+      "expectedOutput": "hold",
+      "tags": ["unresolved-failure"]
+    },
+    {
+      "id": "rr-18",
+      "input": "Unit coverage is 100% green — but the change rewires the session store used by every authenticated surface, and zero integration or end-to-end evidence was collected.",
+      "expectedOutput": "hold",
+      "tags": ["coverage-gap", "borderline"]
+    },
+    {
+      "id": "rr-19",
+      "input": "Staging shows a p95 latency regression of +40% on the search endpoint after this build. The cause is unknown. All functional checks are green.",
+      "expectedOutput": "hold",
+      "tags": ["perf-regression"]
+    },
+    {
+      "id": "rr-20",
+      "input": "The new pricing flow is supposed to ship dark, but staging shows the flag evaluating ON due to a config typo. The typo fix is not yet merged.",
+      "expectedOutput": "hold",
+      "tags": ["flag-misconfig"]
+    },
+    {
+      "id": "rr-21",
+      "input": "3 of 5 tickets in the batch have completed validation; the other two are still mid-QA. The batch is proposed to ship today as-is.",
+      "expectedOutput": "hold",
+      "tags": ["incomplete-validation"]
+    },
+    {
+      "id": "rr-22",
+      "input": "Every suite is green. The release also runs an irreversible backfill rewriting 40 million rows; the dry run on a 1% sample produced 312 errors that nobody has reviewed.",
+      "expectedOutput": "hold",
+      "tags": ["irreversible", "borderline"]
+    },
+    {
+      "id": "rr-23",
+      "input": "The dependency scanner flags a new high-severity vulnerability in a library added by this release; no triage or waiver exists yet. Tests are green.",
+      "expectedOutput": "hold",
+      "tags": ["security"]
+    },
+    {
+      "id": "rr-24",
+      "input": "The end-to-end suite was skipped this cycle due to CI capacity; only unit tests ran. The release spans three components, including checkout.",
+      "expectedOutput": "hold",
+      "tags": ["coverage-gap"]
+    }
+  ]
+}

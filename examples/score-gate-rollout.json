@@ -1,0 +1,44 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "score-gate-rollout",
+  "description": "Code-driven gate: a judge scores a release candidate, a `code` phase turns that score into a discrete decision (ship / hold / block) by threshold, and a `switch` routes to the matching path. Showcases a deterministic `code` phase (no LLM, no tokens) feeding a `switch` — the natural pairing for value-based branching.",
+  "lifecycle": { "tags": ["starter", "branching", "release"] },
+  "phases": [
+    {
+      "name": "evaluate",
+      "agent": "agents/judge-release-readiness.md",
+      "as": "eval",
+      "prompt": "Score this release candidate's readiness from 0 to 1 and explain why. End your reply with a line in the form: score: <number>\n\nCANDIDATE:\n${input}"
+    },
+    {
+      "name": "decide",
+      "code": {
+        "source": "const m = String(input).match(/score\\s*[:=]?\\s*([0-9]*\\.?[0-9]+)/i);\nconst s = m ? parseFloat(m[1]) : 0;\nreturn s >= 0.8 ? 'ship' : s >= 0.5 ? 'hold' : 'block';"
+      },
+      "as": "decision"
+    },
+    {
+      "name": "gate",
+      "switch": {
+        "on": "${decision}",
+        "cases": {
+          "ship": {
+            "name": "deploy",
+            "agent": "agents/deploy-adapter.md",
+            "prompt": "Readiness cleared the bar — roll out the candidate.\n\nEVAL:\n${eval}"
+          },
+          "hold": {
+            "name": "revise",
+            "agent": "agents/dev-lead.md",
+            "prompt": "Borderline readiness — list the few must-fix items before we re-evaluate.\n\nEVAL:\n${eval}"
+          }
+        },
+        "default": {
+          "name": "block",
+          "agent": "agents/mitigation-planner.md",
+          "prompt": "Not ready to ship — identify the blocking risks and the safest next step.\n\nEVAL:\n${eval}"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "flake-classify",
+  "description": "Calibration harness orchestration: routes a failing-check report (with repeated-run evidence) through judge-flake and emits the CHOSEN branch as its output (each branch is a code node returning its own name). That makes the judge eval-able — an eval with an `exact` scorer measures how accurately it separates flaky reds (quarantine) from real regressions (repair). Pair with datasets/flake-calibration.json + evals/flake-calibration.json.",
+  "lifecycle": { "tags": ["judge", "evals"] },
+  "phases": [
+    {
+      "name": "classify",
+      "route": {
+        "router": "agents/judge-flake.md",
+        "branches": {
+          "flaky": { "name": "is-flaky", "code": { "source": "return 'flaky'" } },
+          "real": { "name": "is-real", "code": { "source": "return 'real'" } }
+        },
+        "default": { "name": "is-unknown", "code": { "source": "return 'unknown'" } }
+      }
+    }
+  ]
+}

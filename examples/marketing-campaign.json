@@ -1,0 +1,55 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "marketing-campaign",
+  "description": "Launch brief → strategy → per-channel drafts → brand-voice gate → schedule. A strategist sets one core message; `map` fans the writer out across channels (blog / social / email) so each gets its own angle; a refinement `loop` re-drafts against the brand reviewer until it replies [APPROVED]; a final locked phase lays out the publish calendar. Showcases `map` (fan-out over channels) and `loop` (quality-gated revision) in one flow.",
+  "lifecycle": { "tags": ["business-ops", "content"] },
+  "inputs": [
+    {
+      "name": "brief",
+      "kind": "text",
+      "required": true,
+      "description": "The launch / campaign brief — what's shipping, why it matters, and to whom."
+    }
+  ],
+  "phases": [
+    {
+      "name": "strategy",
+      "agent": "agents/marketing-strategist.md",
+      "as": "plan",
+      "prompt": "Turn this brief into a campaign plan: audience, positioning, ONE core message, and a per-channel angle.\n\nBRIEF:\n${brief}"
+    },
+    {
+      "name": "channel-drafts",
+      "description": "Fan the writer out across channels — each iteration drafts one channel against the same plan.",
+      "map": {
+        "over": "[\"blog\", \"social\", \"email\"]",
+        "body": {
+          "name": "draft-channel",
+          "agent": "agents/writer.md",
+          "prompt": "Draft the ${item} piece for this campaign. Carry the core message; use the ${item} angle from the plan. Keep it tight and on-message.\n\nCAMPAIGN PLAN:\n${plan}"
+        }
+      },
+      "as": "drafts"
+    },
+    {
+      "name": "brand-gate",
+      "description": "Re-draft against the brand reviewer until it approves (or we hit the iteration cap).",
+      "loop": {
+        "body": {
+          "name": "revise",
+          "agent": "agents/writer.md",
+          "prompt": "Revise this channel copy so it's on-brand, clear, and every claim is defensible. Apply any reviewer notes from the prior round.\n\nCOPY:\n${drafts}"
+        },
+        "maxIterations": 3,
+        "judge": "agents/brand-reviewer.md",
+        "until": "[APPROVED]"
+      }
+    },
+    {
+      "name": "schedule",
+      "agent": "agents/marketing-strategist.md",
+      "lock": true,
+      "prompt": "Lay out the publish schedule for the approved copy — channel, sequence, and timing — and confirm it ladders up to the core message. This is the go/no-go on the calendar.\n\nAPPROVED COPY:\n${input}"
+    }
+  ]
+}
