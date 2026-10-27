@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Markdown } from '../Markdown';
 import type { CompositeKind, RunEvent } from '../llm/executor';
+import { isProgramPhase, phaseAgentPath } from './phaseKind';
 import { totalUsage, useRuns, type Run } from '../store/runs';
 import { takeRequestedRun } from '../store/runSelection';
 import { useToast } from '../store/toast';
@@ -917,7 +918,7 @@ function RunDetailCard({
       )}
       <ArtifactList run={run} />
       <BlockList events={run.events} version={run.eventVersion} />
-      {isActive && activePhase && (
+      {isActive && activePhase && !isProgramPhase(phaseAgentPath(run.events, activePhase)) && (
         <ChatInput phaseName={activePhase} paused={paused} onSend={onChat} />
       )}
     </Card>
@@ -2027,7 +2028,8 @@ function PhaseBlock({
           {block.agentPath && <Text style={styles.rowMeta}> · {block.agentPath}</Text>}
           {block.status === 'done' && (
             <Text style={styles.rowMeta}>
-              {' '}· {block.inputTokens ?? 0}t in / {block.outputTokens ?? 0}t out
+              {!isProgramPhase(block.agentPath) &&
+                ` · ${block.inputTokens ?? 0}t in / ${block.outputTokens ?? 0}t out`}
               {block.durationMs != null && ` · ${(block.durationMs / 1000).toFixed(1)}s`}
               {block.costUsd != null && block.costUsd > 0 && ` · $${block.costUsd.toFixed(4)}`}
             </Text>
@@ -2039,7 +2041,9 @@ function PhaseBlock({
       </View>
       {block.reason ? <Text style={styles.subtle}>{block.reason}</Text> : null}
       {block.error ? <Text style={styles.errorText}>{block.error}</Text> : null}
-      {block.text ? <OutputBlock text={block.text} markdown /> : null}
+      {block.text ? (
+        <OutputBlock text={block.text} markdown={!isProgramPhase(block.agentPath)} />
+      ) : null}
     </View>
   );
 }
