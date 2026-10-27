@@ -233,7 +233,12 @@ import {
 
 type Json = unknown;
 
-function repoRoot(viteRoot: string): string {
+export function repoRoot(viteRoot: string): string {
+  // SAMMY_REPO_ROOT names the workspace for every entry point. serve.ts maps
+  // it onto a Vite-style root and the worker reads it directly; the Vite dev
+  // server passes its real root, so without this check it silently opened the
+  // checkout's own run store and triggers instead of the named workspace.
+  if (process.env.SAMMY_REPO_ROOT) return path.resolve(process.env.SAMMY_REPO_ROOT);
   // viteRoot is .../sammy-pack/app/web → repo root is two levels up.
   return path.resolve(viteRoot, '..', '..');
 }
