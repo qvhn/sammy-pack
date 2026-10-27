@@ -288,6 +288,7 @@ export function PipelinesPage({
   const [renameOpen, setRenameOpen] = useState(false);
   // Orchestration awaiting its declared run inputs before launch (null = none).
   const [pendingRun, setPendingRun] = useState<Node | null>(null);
+  const [runStartFailed, setRunStartFailed] = useState(false);
   const [inputsConfigOpen, setInputsConfigOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   // Overflow menu for the toolbar — collapses History / Explain /
@@ -1455,6 +1456,8 @@ async function handleDuplicate() {
                     instead of 10. */}
                 <Pressable
                   onPress={() => setRenameOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Rename pipeline"
                   style={styles.undoButton}>
                   <Text style={styles.undoButtonText}>Rename</Text>
                 </Pressable>
@@ -1503,6 +1506,13 @@ async function handleDuplicate() {
                     setPendingRun(active);
                   }}
                   disabled={!!runs.active || !!budget?.blocked}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !!runs.active || !!budget?.blocked }}
+                  accessibilityLabel={
+                    runs.active && runs.active.orchestrationName !== active.name
+                      ? `Run unavailable: ${runs.active.orchestrationName} is running`
+                      : `Run ${active.name}`
+                  }
                   style={[
                     styles.runButton,
                     (!!runs.active || !!budget?.blocked) &&
@@ -1513,9 +1523,13 @@ async function handleDuplicate() {
                       ? runs.active.status === 'paused'
                         ? '⏸ paused'
                         : '⟳ running…'
-                      : budget?.blocked
-                        ? '$✗ budget exceeded'
-                        : '▶ Run'}
+                      : runs.active
+                        ? // One run at a time in this browser: say whose, so a
+                          // greyed-out ▶ Run isn't a mystery during a long run.
+                          `⏳ ${runs.active.orchestrationName} is running`
+                        : budget?.blocked
+                          ? '$✗ budget exceeded'
+                          : '▶ Run'}
                   </Text>
                 </Pressable>
                 {/* Overflow trigger. Click toggles a popover that
@@ -1968,10 +1982,13 @@ async function handleDuplicate() {
       />
       <RunInputsModal
         orchestration={pendingRun}
-        onClose={() => setPendingRun(null)}
+        error={runStartFailed ? (runs.lastError ?? 'The run did not start.') : null}
+        onClose={() => {
+          setPendingRun(null);
+          setRunStartFailed(false);
+        }}
         onRun={(values, instructions) => {
           const orch = pendingRun;
-          setPendingRun(null);
           if (!orch) return;
           // The instructions box → the run's initial input.
           const initialInput = instructions || undefined;
@@ -1984,7 +2001,16 @@ async function handleDuplicate() {
           const ok = useServer
             ? runs.startServerRun(orch, initialInput, values)
             : runs.startRun(orch, initialInput);
-          if (ok) onNavigate?.('runs');
+          // A refused start (no API key, wrong auth mode, …) keeps the dialog
+          // open with the reason; closing first left only a small red line
+          // behind the dialog, so ▶ Run looked like it did nothing.
+          if (ok) {
+            setPendingRun(null);
+            setRunStartFailed(false);
+            onNavigate?.('runs');
+          } else {
+            setRunStartFailed(true);
+          }
         }}
       />
       {/* Authoring popup for the ◇ Inputs button next to ▶ Run — declare the

@@ -9,6 +9,12 @@ import { TextInput } from 'react-native';
 import { RunInputsModal, runInputPlaceholder } from '../src/RunInputsModal';
 import type { Node } from '../src/types';
 
+let mockAllowAgentTools = false;
+jest.mock('../src/store/apiKey', () => ({
+  ...jest.requireActual('../src/store/apiKey'),
+  getAllowAgentTools: () => mockAllowAgentTools,
+}));
+
 const orch = {
   name: 'demo',
   inputs: [
@@ -99,4 +105,47 @@ test('Escape closes the dialog', () => {
     delete g.addEventListener;
     delete g.removeEventListener;
   }
+});
+
+describe('what the dialog says before and after ▶ Run', () => {
+  const withTools = {
+    name: 'tooled',
+    phases: [
+      { name: 'plan', code: { source: 'return 1' } },
+      { name: 'grp', phases: [{ name: 'write', agent: 'agents/w.md', tools: ['Read', 'Bash'] }] },
+    ],
+  } as unknown as Node;
+  const renderWith = (o: Node, error?: string | null) => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      tree = ReactTestRenderer.create(
+        <RunInputsModal orchestration={o} onClose={jest.fn()} onRun={jest.fn()} error={error} />,
+      );
+    });
+    return tree;
+  };
+  afterEach(() => {
+    mockAllowAgentTools = false;
+  });
+
+  test('warns when agents declare tools but exposing them is off (they would run without them)', () => {
+    mockAllowAgentTools = false;
+    const t = text(renderWith(withTools));
+    expect(t).toMatch(/declare tools \(Read, Bash\)/);
+    expect(t).toMatch(/Settings → Agent tools/);
+  });
+
+  test('says nothing about tools when exposing them is on, or when none are declared', () => {
+    mockAllowAgentTools = true;
+    expect(text(renderWith(withTools))).not.toMatch(/declare tools/);
+    mockAllowAgentTools = false;
+    expect(text(renderWith(orch))).not.toMatch(/declare tools/);
+  });
+
+  test('shows why the last ▶ Run did not start', () => {
+    expect(text(renderWith(orch, 'Server-owned runs require Claude Code login mode.'))).toMatch(
+      /require Claude Code login mode/,
+    );
+    expect(text(renderWith(orch, null))).not.toMatch(/login mode/);
+  });
 });
