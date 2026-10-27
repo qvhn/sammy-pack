@@ -180,7 +180,15 @@ export type SdkStreamChunk =
       preTokens: number;
       postTokens?: number;
     }
-  | { type: 'done'; usage: { inputTokens: number; outputTokens: number } };
+  | {
+      type: 'done';
+      usage: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+      };
+    };
 
 /** Heartbeat throttle: at most one liveness beat per this window while the
  *  SDK stream produces nothing else. 30s ≈ 120 rows/hour of silent tail —
@@ -395,7 +403,12 @@ export async function* streamSdk(
    *  every `retry` of a failed turn was free as far as the caps could tell. */
   const withUsage = <E extends Error>(err: E): E =>
     Object.assign(err, {
-      usage: { inputTokens: ledger.inputTokens, outputTokens: ledger.outputTokens },
+      usage: {
+        inputTokens: ledger.inputTokens,
+        outputTokens: ledger.outputTokens,
+        cacheReadTokens: ledger.cacheReadTokens,
+        cacheWriteTokens: ledger.cacheWriteTokens,
+      },
     });
   // tool_use blocks we've already emitted, keyed by id. The SDK
   // surfaces them both in stream_event partials and the final
@@ -734,7 +747,12 @@ export async function* streamSdk(
 
   yield {
     type: 'done',
-    usage: { inputTokens: ledger.inputTokens, outputTokens: ledger.outputTokens },
+    usage: {
+        inputTokens: ledger.inputTokens,
+        outputTokens: ledger.outputTokens,
+        cacheReadTokens: ledger.cacheReadTokens,
+        cacheWriteTokens: ledger.cacheWriteTokens,
+      },
   };
 }
 

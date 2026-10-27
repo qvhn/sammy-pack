@@ -8,7 +8,13 @@
  */
 
 export type Message = { role: 'user' | 'assistant'; content: string };
-export type Usage = { inputTokens: number; outputTokens: number };
+export type Usage = {
+  inputTokens: number;
+  outputTokens: number;
+  /** Prompt-cache reads / writes (Anthropic). Not part of inputTokens; priced separately (pricing.ts). */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+};
 
 export type StreamEvent =
   | { type: 'text-delta'; text: string }
@@ -108,6 +114,8 @@ export async function* streamAnthropic({
         } else if (ev.type === 'message_start' && ev.message?.usage) {
           usage.inputTokens = ev.message.usage.input_tokens ?? 0;
           usage.outputTokens = ev.message.usage.output_tokens ?? 0;
+          usage.cacheReadTokens = ev.message.usage.cache_read_input_tokens ?? 0;
+          usage.cacheWriteTokens = ev.message.usage.cache_creation_input_tokens ?? 0;
         } else if (ev.type === 'message_delta' && ev.usage) {
           if (typeof ev.usage.output_tokens === 'number') {
             usage.outputTokens = ev.usage.output_tokens;
@@ -147,7 +155,12 @@ export async function callAnthropic({
   }
   const data = (await res.json()) as {
     content?: Array<{ type?: string; text?: string }>;
-    usage?: { input_tokens?: number; output_tokens?: number };
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
   };
   const text = Array.isArray(data.content)
     ? data.content
@@ -160,6 +173,8 @@ export async function callAnthropic({
     usage: {
       inputTokens: data.usage?.input_tokens ?? 0,
       outputTokens: data.usage?.output_tokens ?? 0,
+      cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
     },
   };
 }
