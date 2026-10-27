@@ -1432,11 +1432,21 @@ function enforceBudgets(ctx: ExecutorContext): RunEvent | null {
  *  sites (per-agent ceiling, non-success result, headless tool block) stamp
  *  `err.usage` because the turn that died still consumed those tokens and
  *  the phase must charge them. Absent on errors from anywhere else. */
-function usageOf(
-  err: unknown,
-): { inputTokens: number; outputTokens: number } | null {
+function usageOf(err: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+} | null {
   const u = (
-    err as { usage?: { inputTokens?: unknown; outputTokens?: unknown } } | null
+    err as {
+      usage?: {
+        inputTokens?: unknown;
+        outputTokens?: unknown;
+        cacheReadTokens?: unknown;
+        cacheWriteTokens?: unknown;
+      };
+    } | null
   )?.usage;
   if (
     !u ||
@@ -1445,7 +1455,12 @@ function usageOf(
   ) {
     return null;
   }
-  return { inputTokens: u.inputTokens, outputTokens: u.outputTokens };
+  return {
+    inputTokens: u.inputTokens,
+    outputTokens: u.outputTokens,
+    ...(typeof u.cacheReadTokens === 'number' ? { cacheReadTokens: u.cacheReadTokens } : {}),
+    ...(typeof u.cacheWriteTokens === 'number' ? { cacheWriteTokens: u.cacheWriteTokens } : {}),
+  };
 }
 
 async function* runAgentPhase(
@@ -1719,6 +1734,9 @@ async function* runAgentPhase(
   let aggregateOutput = '';
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  // Prompt-cache tokens (Anthropic): not in totalInputTokens, priced separately by costUsd.
+  let totalCacheReadTokens = 0;
+  let totalCacheWriteTokens = 0;
   let exchangeIdx = 0;
 
   // Per-node provider override: if the node names a provider that's
@@ -1800,7 +1818,10 @@ async function* runAgentPhase(
     inputTokens: number;
     outputTokens: number;
   } => {
-    const cost = costUsd(effectiveModel, totalInputTokens, totalOutputTokens);
+    const cost = costUsd(effectiveModel, totalInputTokens, totalOutputTokens, {
+      cacheReadTokens: totalCacheReadTokens,
+      cacheWriteTokens: totalCacheWriteTokens,
+    });
     ctx.usage.totalInputTokens += totalInputTokens;
     ctx.usage.totalOutputTokens += totalOutputTokens;
     ctx.usage.totalCostUsd += cost;
@@ -1882,6 +1903,8 @@ async function* runAgentPhase(
     let exchangeOutput = '';
     let exchangeInputTokens = 0;
     let exchangeOutputTokens = 0;
+    let exchangeCacheReadTokens = 0;
+    let exchangeCacheWriteTokens = 0;
     let hitMaxTurns = false;
     let userPaused = false;
     let exchangeError: Error | null = null;
@@ -2052,6 +2075,8 @@ async function* runAgentPhase(
         } else if (ev.type === 'done') {
           exchangeInputTokens = ev.usage.inputTokens;
           exchangeOutputTokens = ev.usage.outputTokens;
+          exchangeCacheReadTokens = ev.usage.cacheReadTokens ?? 0;
+          exchangeCacheWriteTokens = ev.usage.cacheWriteTokens ?? 0;
         }
       }
     } catch (err) {
@@ -2070,6 +2095,8 @@ async function* runAgentPhase(
       if (dead) {
         exchangeInputTokens = dead.inputTokens;
         exchangeOutputTokens = dead.outputTokens;
+        exchangeCacheReadTokens = dead.cacheReadTokens ?? 0;
+        exchangeCacheWriteTokens = dead.cacheWriteTokens ?? 0;
       }
       if (err instanceof PauseRequested) {
         userPaused = true;
@@ -2123,6 +2150,8 @@ async function* runAgentPhase(
     }
     totalInputTokens += exchangeInputTokens;
     totalOutputTokens += exchangeOutputTokens;
+    totalCacheReadTokens += exchangeCacheReadTokens;
+    totalCacheWriteTokens += exchangeCacheWriteTokens;
 
     if (exchangeError) {
       // Loud headless-approval signal FIRST, so the run log shows a phase died
