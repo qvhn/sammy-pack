@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { cloneRepoUrl, locateRepo } from './api';
 import { type Node } from './types';
+import { declaredAgentTools } from './declaredTools';
+import { getAllowAgentTools } from './store/apiKey';
 
 export type RunInputFile = { filename: string; mediaType: string; data: string };
 export type RunInputValues = Record<
@@ -114,11 +116,14 @@ export function RunInputsModal({
   onClose,
   onRun,
   defaultInstructions,
+  error,
 }: {
   orchestration: Node | null;
   onClose: () => void;
   onRun: (values: RunInputValues, instructions: string) => void;
   defaultInstructions?: string;
+  /** Why the last ▶ Run from this dialog didn't start (the dialog stays open to say so). */
+  error?: string | null;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<Record<string, RunInputFile>>({});
@@ -328,6 +333,15 @@ export function RunInputsModal({
         {showMissing ? (
           <Text style={styles.errorText}>Provide every required (*) input to run.</Text>
         ) : null}
+        {(() => {
+          const tools = declaredAgentTools(orchestration);
+          return tools.length > 0 && !getAllowAgentTools() ? (
+            <Text style={styles.errorText}>
+              {`Agents in this pipeline declare tools (${tools.join(', ')}), but "Expose declared tools to agents" is off in Settings → Agent tools, so they will run without them.`}
+            </Text>
+          ) : null;
+        })()}
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {cloneOffer ? (
           <View style={styles.cloneOffer}>
             <Text style={styles.cloneOfferText}>

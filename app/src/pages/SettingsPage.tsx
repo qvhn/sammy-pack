@@ -212,7 +212,11 @@ export function SettingsPage() {
           <Hint>e.g. claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001</Hint>
         </View>
         <View style={styles.buttonRow}>
-          <Pressable onPress={save} style={styles.saveButton}>
+          <Pressable
+            onPress={save}
+            accessibilityRole="button"
+            accessibilityLabel="Save LLM provider settings"
+            style={styles.saveButton}>
             <Text style={styles.saveButtonText}>Save</Text>
           </Pressable>
           {savedAt && <Text style={styles.savedNote}>Saved.</Text>}
@@ -676,6 +680,7 @@ function UserIdentityPanel() {
       <View style={styles.buttonRow}>
         <Pressable
           onPress={save}
+          accessibilityRole="button"
           accessibilityLabel="Save identity"
           style={styles.saveButton}>
           <Text style={styles.saveButtonText}>Save</Text>
@@ -752,7 +757,11 @@ function AgentConcurrencyPanel() {
           />
         </View>
         <View style={styles.buttonRow}>
-          <Pressable onPress={save} style={styles.saveButton}>
+          <Pressable
+            onPress={save}
+            accessibilityRole="button"
+            accessibilityLabel="Save agent concurrency"
+            style={styles.saveButton}>
             <Text style={styles.saveButtonText}>Apply</Text>
           </Pressable>
           {savedAt && <Text style={styles.savedNote}>Applied.</Text>}
@@ -922,6 +931,7 @@ function BudgetPanel() {
       <View style={styles.buttonRow}>
         <Pressable
           onPress={save}
+          accessibilityRole="button"
           accessibilityLabel="Save budget caps"
           style={styles.saveButton}>
           <Text style={styles.saveButtonText}>Save</Text>
