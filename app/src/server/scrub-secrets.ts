@@ -43,7 +43,9 @@ const REDACTED = '[REDACTED]';
  *   - figd_…             Figma personal access tokens
  *   - lin_api_… / lin_oauth_…  Linear API keys
  *   - secret_…           Notion integration secrets (ntn_ newer / secret_ legacy)
- *   - long base64/hex blobs (40+ chars) — generic high-entropy fallback
+ *   - long base64/hex blobs (40+ chars) — generic high-entropy fallback,
+ *     kept separate (GENERIC_BLOB + looksRandom below) because a run of the
+ *     same characters is also what a kebab-case id or a file path is
  */
 const TOKEN_PATTERNS: RegExp[] = [
   // sk-ant-… (Anthropic) and sk-… / sk-proj-… (OpenAI). The body is
@@ -69,11 +71,34 @@ const TOKEN_PATTERNS: RegExp[] = [
   /\blin_(?:api|oauth)_[A-Za-z0-9]{20,}/g,
   // Notion integration secrets (legacy `secret_` and newer `ntn_`).
   /\b(?:secret_|ntn_)[A-Za-z0-9]{32,}/g,
-  // Generic high-entropy fallback: a long unbroken base64url/hex run.
-  // 40+ chars catches most opaque bearer blobs without tripping on
-  // ordinary words (which contain spaces / punctuation well before 40).
-  /\b[A-Za-z0-9+/_-]{40,}={0,2}/g,
 ];
+
+/** Generic high-entropy fallback: a long run of base64url / hex characters.
+ *  40+ chars catches most opaque bearer blobs, but kebab-case ids and file
+ *  paths are 40+ runs of the same characters
+ *  (`report-incoming-message-reasons-then-back-out`,
+ *  `Users/me/git/app/tmp/screenshots/run-2026-10-26-full`), so a match only
+ *  counts when it also `looksRandom`. Applied after TOKEN_PATTERNS. */
+const GENERIC_BLOB = /\b[A-Za-z0-9+/_-]{40,}={0,2}/g;
+
+/** Does a GENERIC_BLOB match look like a random token rather than words
+ *  joined by separators? Random tokens have a long unbroken alphanumeric
+ *  stretch (hex digests, base64 bodies) or mix upper case, lower case and
+ *  digits over a fair stretch; identifiers and paths are short words split
+ *  by `-` `/` `_` `+`. */
+function looksRandom(s: string): boolean {
+  const longest = Math.max(0, ...s.split(/[+/_=-]+/).map(r => r.length));
+  if (longest >= 32) return true;
+  return longest >= 16 && /[a-z]/.test(s) && /[A-Z]/.test(s) && /\d/.test(s);
+}
+
+/** Replace every GENERIC_BLOB match that `looksRandom`. */
+function scrubGenericBlobs(text: string): string {
+  GENERIC_BLOB.lastIndex = 0;
+  const out = text.replace(GENERIC_BLOB, m => (looksRandom(m) ? REDACTED : m));
+  GENERIC_BLOB.lastIndex = 0;
+  return out;
+}
 
 /** Does `value` contain a token any pattern above recognises? The registry
  *  masker (credentials-store.ts) asks this about a config leaf that sits
@@ -90,7 +115,7 @@ export function looksLikeKnownToken(value: string): boolean {
     re.lastIndex = 0;
     if (hit) return true;
   }
-  return false;
+  return scrubGenericBlobs(value) !== value;
 }
 
 /** Escape a literal string for safe embedding in a RegExp. */
@@ -270,12 +295,13 @@ export function scrubSecrets(
     }
   }
 
-  // Layer 1: known token patterns.
+  // Layer 1: known token patterns, then the generic fallback.
   for (const re of TOKEN_PATTERNS) {
     // Reset lastIndex defensively (these are module-level /g regexes).
     re.lastIndex = 0;
     out = out.replace(re, REDACTED);
   }
+  out = scrubGenericBlobs(out);
 
   return out;
 }
