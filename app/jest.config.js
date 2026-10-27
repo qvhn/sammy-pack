@@ -2,6 +2,8 @@ module.exports = {
   preset: '@react-native/jest-preset',
   // Machine-independence pin (agent-slot pool) — see jest.setup.ts.
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  // Tests own their git repos: drop a GIT_DIR inherited from a hook — see jest.global-setup.js.
+  globalSetup: '<rootDir>/jest.global-setup.js',
   moduleNameMapper: {
     // Resolve the workspace SDK + queue-service packages to their SOURCE so
     // tests run without first building each dist/ (matching the no-build
