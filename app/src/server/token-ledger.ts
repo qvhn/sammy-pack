@@ -83,6 +83,9 @@ export class TokenLedger {
   /** Plain input/output totals, for the caller's own usage reporting. */
   inputTokens = 0;
   outputTokens = 0;
+  /** Plain prompt-cache totals (reads / writes), reported so cost can price them. */
+  cacheReadTokens = 0;
+  cacheWriteTokens = 0;
 
   constructor(now: number = Date.now()) {
     this.startedAtMs = now;
@@ -130,6 +133,8 @@ export class TokenLedger {
     };
     this.inputTokens += n('input_tokens');
     this.outputTokens += n('output_tokens');
+    this.cacheReadTokens += n('cache_read_input_tokens');
+    this.cacheWriteTokens += n('cache_creation_input_tokens');
     this.raw +=
       n('input_tokens') +
       n('output_tokens') +

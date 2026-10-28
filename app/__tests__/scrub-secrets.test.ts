@@ -1,4 +1,4 @@
-import { scrubSecrets, scrubDeep, serverSecretValues } from '../src/server/scrub-secrets';
+import { scrubSecrets, scrubDeep, serverSecretValues, looksLikeKnownToken } from '../src/server/scrub-secrets';
 
 describe('scrubSecrets — known token patterns', () => {
   it('redacts Anthropic + OpenAI keys', () => {
@@ -37,6 +37,31 @@ describe('scrubSecrets — known token patterns', () => {
   it('redacts a long opaque base64/hex blob via the generic fallback', () => {
     const blob = 'a'.repeat(50);
     expect(scrubSecrets(`secret=${blob}`)).toBe('secret=[REDACTED]');
+  });
+
+  it('leaves long kebab-case ids and file paths alone (the fallback needs a random-looking run)', () => {
+    const lines = [
+      '[3/281] RUN checkout-applies-coupon-then-backs-out-of-payment (cart, buyer) ...',
+      'guest-profile-has-no-edit-or-delete-overflow-menu',
+      '(logs tmp/test-runs/unit-20261026-224930.log, tmp/test-runs/unit-20261026-224930-rerun.log)',
+      '{"dir": "/Users/someone/projects/webapp/tmp/screenshots/qa-2026-10-26-full", "count": 452}',
+      'PASS tests/e2e/flows/account-settings/update-profile-and-save-changes.flow.json',
+    ];
+    for (const line of lines) expect(scrubSecrets(line)).toBe(line);
+  });
+
+  it('still redacts random-looking blobs: hex digests and mixed-case base64', () => {
+    const hex = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+    expect(scrubSecrets(`sha=${hex}`)).toBe('sha=[REDACTED]');
+    const b64 = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY1';
+    expect(scrubSecrets(`key ${b64} end`)).toBe('key [REDACTED] end');
+    const url = 'token=Qm9vdHN0cmFwVG9rZW4tMjAyNi0xMC0yNi1hYmNkZWZn';
+    expect(scrubSecrets(url)).toBe('token=[REDACTED]');
+  });
+
+  it('looksLikeKnownToken agrees with the scrubber on ids vs blobs', () => {
+    expect(looksLikeKnownToken('checkout-applies-coupon-then-backs-out-of-payment')).toBe(false);
+    expect(looksLikeKnownToken('9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08')).toBe(true);
   });
 
   it('leaves ordinary prose untouched', () => {

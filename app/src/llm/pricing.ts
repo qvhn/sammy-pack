@@ -40,15 +40,43 @@ const PRICING: Record<string, Price> = {
   'gemini-2.0-pro': { input: 1.25, output: 5 },
 };
 
+/** Anthropic prompt caching: a cache write costs 1.25x the input price (5-minute cache), a cache read 0.1x.
+ *  The same factors TokenLedger weights its ceiling with. Providers that don't report cache tokens pass none. */
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_READ_MULTIPLIER = 0.1;
+
+/** A Claude model newer than this table (claude-sonnet-5-5, claude-opus-5-5, a new family) would otherwise cost 0
+ *  and slip past every spend cap. Price it like the most expensive listed model of its family (opus / sonnet /
+ *  haiku), or the most expensive listed Claude model for a family the table doesn't know: an over-estimate
+ *  until the table is updated, never a silent zero. Non-Claude models with no entry still cost 0 (no guess). */
+function claudeFallback(key: string): Price | undefined {
+  if (!key.startsWith('claude-')) return undefined;
+  const family = /(opus|sonnet|haiku)/.exec(key)?.[1];
+  const pool = Object.entries(PRICING)
+    .filter(([k]) => k.startsWith('claude-') && (!family || k.includes(family)))
+    .map(([, price]) => price);
+  if (pool.length === 0) return undefined;
+  return pool.reduce((a, b) => (b.input + b.output > a.input + a.output ? b : a));
+}
+
 export function costUsd(
   model: string,
   inputTokens: number,
   outputTokens: number,
+  cache?: { cacheReadTokens?: number; cacheWriteTokens?: number },
 ): number {
   const key = normalize(model);
-  const p = PRICING[key];
+  const p = PRICING[key] ?? claudeFallback(key);
   if (!p) return 0;
-  return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
+  const writes = cache?.cacheWriteTokens ?? 0;
+  const reads = cache?.cacheReadTokens ?? 0;
+  return (
+    (inputTokens * p.input +
+      writes * p.input * CACHE_WRITE_MULTIPLIER +
+      reads * p.input * CACHE_READ_MULTIPLIER +
+      outputTokens * p.output) /
+    1_000_000
+  );
 }
 
 /** Lookup helper — strip date suffixes like `-20250115` so callers with dated

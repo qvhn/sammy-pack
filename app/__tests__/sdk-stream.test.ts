@@ -117,6 +117,22 @@ describe('streamSdk → SDK options', () => {
 });
 
 describe('streamSdk stamps its usage on every error it throws', () => {
+  it('`done` reports the turns\' prompt-cache reads and writes, so the phase cost can price them', async () => {
+    const cached = (input_tokens: number, output_tokens: number, read: number, write: number): SdkMsg => ({
+      type: 'stream_event',
+      event: {
+        type: 'message_start',
+        message: { usage: { input_tokens, output_tokens, cache_read_input_tokens: read, cache_creation_input_tokens: write } },
+      },
+    });
+    const { queryFn } = fakeQuery([cached(3, 40, 20_000, 1_500), cached(2, 10, 21_500, 0), result()]);
+    const chunks = await drain({ queryFn });
+    expect(chunks[chunks.length - 1]).toEqual({
+      type: 'done',
+      usage: { inputTokens: 5, outputTokens: 50, cacheReadTokens: 41_500, cacheWriteTokens: 1_500 },
+    });
+  });
+
   it('a successful turn yields `done` with the ledger totals', async () => {
     const { queryFn } = fakeQuery([
       turn(100, 20),
@@ -126,7 +142,7 @@ describe('streamSdk stamps its usage on every error it throws', () => {
     const chunks = await drain({ queryFn });
     expect(chunks[chunks.length - 1]).toEqual({
       type: 'done',
-      usage: { inputTokens: 400, outputTokens: 60 },
+      usage: { inputTokens: 400, outputTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0 },
     });
   });
 
@@ -134,7 +150,7 @@ describe('streamSdk stamps its usage on every error it throws', () => {
     const { queryFn } = fakeQuery([turn(500), result()]);
     const err = await thrownBy(drain({ queryFn, maxAgentTokens: 100 }));
     expect(err).toBeInstanceOf(AgentTokenCeilingError);
-    expect(usageOf(err)).toEqual({ inputTokens: 500, outputTokens: 0 });
+    expect(usageOf(err)).toEqual({ inputTokens: 500, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
   });
 
   it('a non-success result throws with the larger of the accumulated and reported totals', async () => {
@@ -151,14 +167,14 @@ describe('streamSdk stamps its usage on every error it throws', () => {
     const err = await thrownBy(drain({ queryFn }));
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/api_error/);
-    expect(usageOf(err)).toEqual({ inputTokens: 1_200, outputTokens: 300 });
+    expect(usageOf(err)).toEqual({ inputTokens: 1_200, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0 });
   });
 
   it('a max-turns result throws the pause-point error, with usage', async () => {
     const { queryFn } = fakeQuery([turn(10, 5), result({ subtype: 'error_max_turns' })]);
     const err = await thrownBy(drain({ queryFn }));
     expect((err as Error).message).toBe('Reached maximum number of turns');
-    expect(usageOf(err)).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(usageOf(err)).toEqual({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 });
   });
 
   it('a terminal verdict (a refusal) throws TerminalPhaseError, with usage', async () => {
@@ -168,7 +184,7 @@ describe('streamSdk stamps its usage on every error it throws', () => {
     ]);
     const err = await thrownBy(drain({ queryFn }));
     expect(err).toBeInstanceOf(TerminalPhaseError);
-    expect(usageOf(err)).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(usageOf(err)).toEqual({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 });
   });
 
   it('a headless tool block throws ToolPermissionRequiredError after the loop, with usage', async () => {
@@ -186,7 +202,7 @@ describe('streamSdk stamps its usage on every error it throws', () => {
     expect(decision).toMatchObject({ behavior: 'deny', interrupt: true });
     expect(err).toBeInstanceOf(ToolPermissionRequiredError);
     expect((err as ToolPermissionRequiredError).toolName).toBe('Bash');
-    expect(usageOf(err)).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(usageOf(err)).toEqual({ inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 });
   });
 });
 
