@@ -677,6 +677,41 @@ export type WaitBody = {
   timeoutSeconds?: number;
 };
 
+/** How a run walks an orchestration. `pipeline` (the default): the engine
+ *  walks the tree and gives every agent step its own agent. `harness`: ONE
+ *  agent follows the tree as a list of steps and does each one itself — with
+ *  the skill the step names, or by doing the step's task — while the engine
+ *  runs the script / HTTP / wait steps exactly as written, holds the gates,
+ *  checkpoints each finished step and decides whether the run is complete. */
+export type ExecutionMode = 'pipeline' | 'harness';
+
+/** How closely a harness run must follow the orchestration's steps.
+ *   - `strict`   — in the declared order; a step can't start until the one
+ *                  before it is done (steps inside a `parallel` may go in any
+ *                  order among themselves). The default.
+ *   - `loose`    — any order, but every required step must be done before the
+ *                  run can finish.
+ *   - `advisory` — the steps are a guide: the agent may skip one, saying why;
+ *                  the run then ends degraded, naming what was skipped.
+ *  Gates, budgets and the sandbox hold in every mode. */
+export type HarnessFollow = 'strict' | 'loose' | 'advisory';
+
+/** Top-level `harness` block: how this orchestration runs in harness mode. */
+export type HarnessConfig = {
+  /** Default `strict`. A run may override it (the Run dialog, the start API)
+   *  unless `lockFollow` is set; otherwise the workspace default applies. */
+  follow?: HarnessFollow;
+  /** The run may only make `follow` STRICTER than declared here, never looser
+   *  (a deploy that must go step by step). */
+  lockFollow?: boolean;
+  /** Model for the harness agent. Default: the run's model. */
+  model?: string;
+  /** Extra guidance for the harness agent, added to its system prompt. */
+  instructions?: string;
+  /** SDK turn cap for one harness session leg. Default 1000. */
+  maxTurns?: number;
+};
+
 export type Node = {
   name: string;
   description?: string;
@@ -926,6 +961,19 @@ export type Node = {
    *  behavior — every lock pauses for human approval). Read only off the
    *  orchestration root; a value on a child node is ignored. */
   autoApproveLocks?: boolean;
+
+  /** Top-level only: how a run walks this orchestration (see
+   *  {@link ExecutionMode}). Default `pipeline`; a run may override it. */
+  execution?: ExecutionMode;
+
+  /** Top-level only: harness-mode settings (see {@link HarnessConfig}). */
+  harness?: HarnessConfig;
+
+  /** A skill (Claude Code `SKILL.md`, by name or `plugin:skill`) the harness
+   *  agent runs to do this step. Harness mode only — a pipeline run ignores it
+   *  and runs the step's `agent` as usual. A step that names a skill nobody
+   *  installed fails the run before it starts. */
+  skill?: string;
 
   /** Top-level only: mutual exclusion for runs that share an external
    *  resource. When set, the server refuses to let two runs in the same

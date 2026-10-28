@@ -169,6 +169,12 @@ import {
   type BudgetStatus,
 } from './src/server/budget-store';
 import {
+  harnessSettingsFile,
+  readHarnessSettingsSync,
+  writeHarnessSettings,
+} from './src/server/harness-settings';
+import { isHarnessFollow, resolveFollow } from './src/llm/harness';
+import {
   buildOrchestrationCard,
   buildRootCard,
   partsToText,
@@ -1153,6 +1159,8 @@ export async function mountSammyApi(
       const hooksRegistryFile = path.join(root, 'hooks', 'hooks.json');
       const runsDir = path.join(root, 'runs');
       const budgetFile = path.join(root, 'budget.json');
+      // Workspace defaults for harness runs (the default strictness).
+      const harnessFile = harnessSettingsFile(root);
       // Operator intake pauses (POST /api/orchestrations/<name>/pause), shared
       // with a standalone worker through the workspace root.
       const intakePauses = new IntakePauseStore(root);
@@ -2144,6 +2152,7 @@ export async function mountSammyApi(
       const serverStateFiles = [
         credentialsFile,
         budgetFile,
+        harnessFile,
         mcpRegistryFile,
         hooksRegistryFile,
         ...(store.filePath ? [store.filePath] : []),
@@ -7759,6 +7768,13 @@ export async function mountSammyApi(
           initialInput?: string;
           model?: string;
           allowAgentTools?: boolean;
+          /** Run this orchestration as a pipeline or a harness, overriding
+           *  its own `execution`. */
+          execution?: string;
+          /** Harness strictness for this run (strict | loose | advisory),
+           *  overriding the orchestration's and the workspace default —
+           *  unless the orchestration locks it, then only a stricter value. */
+          follow?: string;
           /** Values for the orchestration's declared `inputs`, keyed by
            *  input name. For kind:'file', `data` is base64 of the upload. */
           inputs?: Record<
@@ -7780,10 +7796,43 @@ export async function mountSammyApi(
         }
         // A server state file is never an orchestration — see
         // `namesServerStateFile`; the answer is the one a missing file gets.
-        const ctx = (await namesServerStateFile(name))
+        const loaded = (await namesServerStateFile(name))
           ? null
           : await loadRunContext(name);
-        if (!ctx) return sendError(res, 404, `Orchestration not found: ${name}`);
+        if (!loaded) return sendError(res, 404, `Orchestration not found: ${name}`);
+
+        // Pipeline or harness, and — for a harness — how strictly, resolved
+        // once here and written into the run's snapshot, so a resumed leg
+        // follows the same rules even if Settings change meanwhile.
+        if (body.execution !== undefined && body.execution !== 'pipeline' && body.execution !== 'harness') {
+          return sendError(res, 400, 'execution must be "pipeline" or "harness"');
+        }
+        if (body.follow !== undefined && !isHarnessFollow(body.follow)) {
+          return sendError(res, 400, 'follow must be "strict", "loose" or "advisory"');
+        }
+        const execution = body.execution ?? loaded.orchestration.execution ?? 'pipeline';
+        const harnessFollow =
+          execution === 'harness'
+            ? resolveFollow({
+                ...(isHarnessFollow(body.follow) ? { requested: body.follow } : {}),
+                declared: loaded.orchestration.harness?.follow,
+                locked: loaded.orchestration.harness?.lockFollow,
+                workspaceDefault: readHarnessSettingsSync(harnessFile).follow ?? undefined,
+              })
+            : undefined;
+        const ctx =
+          execution === (loaded.orchestration.execution ?? 'pipeline') && !harnessFollow
+            ? loaded
+            : {
+                ...loaded,
+                orchestration: {
+                  ...loaded.orchestration,
+                  execution,
+                  ...(harnessFollow
+                    ? { harness: { ...(loaded.orchestration.harness ?? {}), follow: harnessFollow.follow } }
+                    : {}),
+                },
+              };
 
         // Server-side budget gate. Pre-flight: refuse the run outright
         // if a daily / monthly spend cap is already reached. Otherwise
@@ -7905,6 +7954,7 @@ export async function mountSammyApi(
                   ownerId,
                   resolvedInputs,
                   runId,
+                  ...(harnessFollow ? { harnessFollow } : {}),
                 },
                 signal,
               ),
@@ -9770,6 +9820,36 @@ export async function mountSammyApi(
       // cap actually enforceable — POST /api/runs/start refuses a
       // blocked run server-side, instead of the cap being a greyed-out
       // button a direct API call would sail straight past.
+      // GET /api/harness/settings → { follow } — the workspace default
+      //                              strictness for harness runs (null =
+      //                              the built-in `strict`)
+      // PUT /api/harness/settings → write it (same shape)
+      // Server-side so a harness run started by a trigger or the API follows
+      // the same default as one started from the Run dialog.
+      server.middlewares.use('/api/harness/settings', async (req, res) => {
+        try {
+          const method = req.method ?? 'GET';
+          if (method === 'GET') return sendJson(res, 200, readHarnessSettingsSync(harnessFile));
+          if (method === 'PUT') {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(await readBody(req));
+            } catch {
+              return sendError(res, 400, 'Invalid JSON body');
+            }
+            const follow = (parsed as { follow?: unknown } | null)?.follow;
+            if (follow !== null && !isHarnessFollow(follow)) {
+              return sendError(res, 400, 'follow must be "strict", "loose", "advisory" or null');
+            }
+            return sendJson(res, 200, await writeHarnessSettings(harnessFile, { follow }));
+          }
+          return sendError(res, 405, 'Method not allowed');
+        } catch (err) {
+          console.error('[sammy-pack-api] harness settings error:', err);
+          return sendError(res, 500, (err as Error).message);
+        }
+      });
+
       server.middlewares.use('/api/budget', async (req, res) => {
         try {
           const sub = (req.url ?? '/').split('?')[0].replace(/^\/|\/$/g, '');

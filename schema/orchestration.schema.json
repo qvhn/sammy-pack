@@ -74,6 +74,9 @@
         "prompt":      { "type": "string", "minLength": 1,
                          "description": "Literal user-message override; interpolated against state + scope (${item}, ${stateVar}, ${input}). Replaces upstream lastOutput as the agent's input for this phase." },
 
+        "skill":       { "type": "string", "minLength": 1,
+                         "description": "Harness mode: a Claude Code skill (SKILL.md name, or plugin:skill) the harness agent runs to do this step. A pipeline run ignores it. A run whose steps name a skill that isn't installed fails before it starts." },
+
         "maxTurns":    { "type": "integer", "minimum": 1,
                          "description": "Per-phase SDK turn cap. Defaults to the proxy's 250-turn limit. Bump for agents that drive long iterative flows (UI automation, simulator-driving, multi-file refactors)." },
 
@@ -98,6 +101,20 @@
 
         "autoApproveLocks": { "type": "boolean",
                          "description": "Top-level only: auto-approve every `lock: true` human gate instead of pausing for an interactive approval. For UNATTENDED runs (cron / webhook) where no human is present to approve — without it a locked phase blocks forever and the run silently wedges. The gate still emits its lock-gate event (audit trail preserved); only the pause is skipped. Defaults to false (every lock pauses for human approval). Read only off the orchestration root." },
+
+        "execution":   { "enum": ["pipeline", "harness"],
+                         "description": "Top-level only: how a run walks this orchestration. `pipeline` (default): the engine walks the tree and gives every agent step its own agent. `harness`: one agent follows the tree as a list of steps and does each itself (with the step's `skill`, or by doing its task); the engine runs script / HTTP / wait steps exactly as written, holds the gates and checkpoints every finished step. A run may override it." },
+
+        "harness":     { "type": "object", "additionalProperties": false,
+                         "description": "Top-level only: harness-mode settings.",
+                         "properties": {
+                           "follow":      { "enum": ["strict", "loose", "advisory"],
+                                            "description": "How closely the harness must follow the steps. strict (default): in order. loose: any order, all required steps done. advisory: steps are a guide; a skipped step ends the run degraded. Gates, budgets and the sandbox hold in every mode." },
+                           "lockFollow":  { "type": "boolean", "description": "A run may only make `follow` stricter, never looser." },
+                           "model":       { "type": "string", "description": "Model for the harness agent. Default: the run's model." },
+                           "instructions":{ "type": "string", "description": "Extra guidance added to the harness agent's system prompt." },
+                           "maxTurns":    { "type": "integer", "minimum": 1, "description": "SDK turn cap for one harness session leg. Default 1000." }
+                         } },
 
         "concurrency": { "$ref": "#/$defs/orchestrationConcurrency",
                          "description": "Top-level only: mutual exclusion for runs that share an external resource. Runs whose root declares the same `concurrency.group` never run concurrently; `concurrency.policy` (skip / queue / cancel-existing, default queue) decides what a fire does when the group is busy. The group is an OPAQUE token — the framework knows nothing about the resource it stands for. Enforced at the server start-gate (server-owned runs only). Read only off the orchestration root." },

@@ -173,6 +173,19 @@ export function computeDegradation(
         });
         break;
       }
+      case 'harness-step': {
+        // An advisory harness may skip a step; the run then finished without
+        // doing it. (A failed optional step already arrives as a phase-error;
+        // a step a falsy `when` skipped is the orchestration working.)
+        const ev = e as unknown as { phaseName?: string; status?: string; by?: string; reason?: string };
+        if (ev.status === 'skipped' && ev.by === 'harness') {
+          reasons.push({
+            phase: typeof ev.phaseName === 'string' ? ev.phaseName : '(unknown)',
+            reason: `skipped by the harness: ${clip(String(ev.reason ?? 'no reason given'))}`,
+          });
+        }
+        break;
+      }
       default:
         break;
     }
