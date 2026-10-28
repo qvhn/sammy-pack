@@ -32,8 +32,14 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      # On a 2-core runner Jest's default (cores - 1 = 1 worker) runs the
+      # whole suite IN its main process, where one test's leftover handle
+      # keeps the process alive after the summary — the job then sat until
+      # the 20-minute timeout with every test passed. Two workers keep tests
+      # out of the main process (a stuck worker is force-exited); --forceExit
+      # is the backstop.
       - name: Unit tests
-        run: npm test -- --ci
+        run: npm test -- --ci --maxWorkers=2 --forceExit
       - name: Web build
         run: npm run build:web
 

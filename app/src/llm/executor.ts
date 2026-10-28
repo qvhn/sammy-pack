@@ -3142,6 +3142,9 @@ async function* runCodePhase(
         on?(ev: string, cb: (...a: unknown[]) => void): void;
       } | null;
       on(e: string, cb: (...args: unknown[]) => void): void;
+      // Optional for the same minimal stubs; a real child has both.
+      pid?: number;
+      kill?(sig?: NodeJS.Signals): boolean;
     };
     const getBuiltin = (
       globalThis.process as unknown as {
@@ -3309,9 +3312,15 @@ async function* runCodePhase(
     // and could false-trip the stall watchdog).
     let wake: (() => void) | undefined;
     const signal = () => { wake?.(); };
+    // Its own process group (POSIX), so a kill reaches the WHOLE command:
+    // `sh -c 'a; b'` under dash (Linux's /bin/sh) forks `b` instead of
+    // exec'ing it, and a signal to the shell alone left `b` running forever
+    // after a timeout — holding the server's pipes open. See killTree.
+    const ownGroup = process.platform !== 'win32';
     const spawnOpts = {
       shell: argv === null,
       signal: ac.signal,
+      detached: ownGroup,
       ...(runCwd ? { cwd: runCwd } : {}),
       // The whole server environment by default; only the base set + the
       // names in SAMMY_CODE_RUN_ENV when that is set (a test that dumps its
@@ -3322,6 +3331,24 @@ async function* runCodePhase(
     };
     const child =
       argv === null ? spawn(command, spawnOpts) : spawn(argv[0], argv.slice(1), spawnOpts);
+    const killTree = (sig: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      try {
+        if (ownGroup) process.kill(-child.pid, sig);
+        else child.kill?.(sig);
+      } catch {
+        /* already gone */
+      }
+    };
+    ac.signal.addEventListener(
+      'abort',
+      () => {
+        killTree('SIGTERM');
+        const hard = setTimeout(() => killTree('SIGKILL'), 2_000);
+        (hard as { unref?: () => void }).unref?.();
+      },
+      { once: true },
+    );
     // `code.artifact`: keep the whole command log (bounded tail) as a named
     // run artifact — on failure as much as on success, since a failing
     // reproduction's output is the evidence worth attaching to a ticket.
@@ -3484,6 +3511,7 @@ async function* runCodePhase(
       result = out;
     } catch (err) {
       clearInterval(poll);
+      if (!closed) ac.abort();
       if (ctx.cancelled.v) throw new RunCancelled();
       // A stall kill reports itself exactly like the watchdog would, so the
       // run viewer's stall marker and the degradation reason are unchanged.
@@ -3512,6 +3540,14 @@ async function* runCodePhase(
         ts: Date.now(),
       };
       throw err;
+    } finally {
+      // Ended from OUTSIDE (the phase backstop or a cancel calling the
+      // generator's return() while it waits on the child): neither branch
+      // above ran, so stop the command here or it outlives the phase.
+      if (!closed) {
+        clearInterval(poll);
+        ac.abort();
+      }
     }
     clearInterval(poll);
     {
