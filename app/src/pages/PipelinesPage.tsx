@@ -1987,7 +1987,7 @@ async function handleDuplicate() {
           setPendingRun(null);
           setRunStartFailed(false);
         }}
-        onRun={(values, instructions) => {
+        onRun={(values, instructions, mode) => {
           const orch = pendingRun;
           if (!orch) return;
           // The instructions box → the run's initial input.
@@ -1996,10 +1996,12 @@ async function handleDuplicate() {
           // server-owned path. With no declared inputs we honor the auth
           // mode just like a plain ▶ Run did (proxy → server, else browser).
           const hasDeclaredInputs = Object.keys(values).length > 0;
+          // A harness only runs server-side (its agent hosts the step tools).
+          const harness = (mode.execution ?? orch.execution) === 'harness';
           const useServer =
-            hasDeclaredInputs || getAuthMode() === 'claude-code-proxy';
+            hasDeclaredInputs || harness || getAuthMode() === 'claude-code-proxy';
           const ok = useServer
-            ? runs.startServerRun(orch, initialInput, values)
+            ? runs.startServerRun(orch, initialInput, values, mode)
             : runs.startRun(orch, initialInput);
           // A refused start (no API key, wrong auth mode, …) keeps the dialog
           // open with the reason; closing first left only a small red line

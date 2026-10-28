@@ -84,7 +84,64 @@ test('Enter in a single-line field runs only when the form is valid', async () =
   await ReactTestRenderer.act(async () => {
     tree.root.findAllByType(TextInput)[0].props.onSubmitEditing();
   });
-  expect(onRun).toHaveBeenCalledWith({ repo: { value: '/tmp/project' } }, '');
+  // Run as the orchestration says: no execution or strictness override.
+  expect(onRun).toHaveBeenCalledWith({ repo: { value: '/tmp/project' } }, '', {});
+});
+
+describe('how to run', () => {
+  const plain = { name: 'plain', phases: [] } as unknown as Node;
+  const pressLabel = (t: ReactTestRenderer.ReactTestRenderer, label: string) =>
+    ReactTestRenderer.act(() =>
+      t.root
+        .findAll(n => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function')[0]
+        .props.onPress(),
+    );
+  async function renderFor(o: Node) {
+    const onRun = jest.fn();
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      tree = ReactTestRenderer.create(<RunInputsModal orchestration={o} onClose={jest.fn()} onRun={onRun} />);
+    });
+    return { tree, onRun };
+  }
+  const submit = async (t: ReactTestRenderer.ReactTestRenderer) =>
+    ReactTestRenderer.act(async () => runButton(t).props.onPress());
+
+  test('Harness sends execution, and strictness only once the user picks one', async () => {
+    const { tree, onRun } = await renderFor(plain);
+    expect(text(tree)).not.toMatch(/How strictly/);
+    pressLabel(tree, 'Harness');
+    expect(text(tree)).toMatch(/How strictly/);
+    expect(text(tree)).toMatch(/Set by the default/);
+    await submit(tree);
+    expect(onRun).toHaveBeenLastCalledWith({}, '', { execution: 'harness' });
+    pressLabel(tree, 'Loose order');
+    await submit(tree);
+    expect(onRun).toHaveBeenLastCalledWith({}, '', { execution: 'harness', follow: 'loose' });
+  });
+
+  test('an orchestration that is already a harness needs no execution override', async () => {
+    const { tree, onRun } = await renderFor({ ...plain, execution: 'harness', harness: { follow: 'loose' } } as Node);
+    expect(text(tree)).toMatch(/Set by this orchestration/);
+    await submit(tree);
+    expect(onRun).toHaveBeenLastCalledWith({}, '', {});
+    pressLabel(tree, 'Pipeline');
+    await submit(tree);
+    expect(onRun).toHaveBeenLastCalledWith({}, '', { execution: 'pipeline' });
+  });
+
+  test('a locked orchestration only offers stricter choices', async () => {
+    const { tree } = await renderFor({
+      ...plain,
+      execution: 'harness',
+      harness: { follow: 'loose', lockFollow: true },
+    } as Node);
+    const pill = (label: string) =>
+      tree.root.findAll(n => n.props.accessibilityLabel === label && n.props.accessibilityRole === 'radio')[0];
+    expect(pill('Advisory').props.accessibilityState).toMatchObject({ disabled: true });
+    expect(pill('Strict order').props.accessibilityState).toMatchObject({ disabled: false });
+    expect(text(tree)).toMatch(/locked at Loose order or stricter/);
+  });
 });
 
 test('Escape closes the dialog', () => {

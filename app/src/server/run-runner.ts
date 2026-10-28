@@ -42,7 +42,7 @@ import {
   type StreamFn,
 } from '../llm/executor';
 import { streamSdk } from './sdk-stream';
-import { buildHarnessMcpServer, harnessToolGateHook, skillInstalled } from './harness-session';
+import { buildHarnessMcpServer, harnessControlFor, harnessToolGateHook, skillInstalled } from './harness-session';
 import { HARNESS_TOOL_SERVER, resolveFollow, type ResolvedFollow } from '../llm/harness';
 import { harnessSettingsFile, readHarnessSettingsSync } from './harness-settings';
 import type { RunContext } from './run-context';
@@ -530,6 +530,8 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
       // A harness agent with no worktree works in the workspace root, where
       // its project skills live and where `claude --resume` finds the session.
       harnessCwd: root,
+      // The run's handle for a person taking it over in a terminal.
+      ...(harnessFollow && opts.runId ? { harnessControl: harnessControlFor(opts.runId) } : {}),
       skillExists: (name: string) =>
         skillInstalled(name, worktrees && worktrees.length === 1 ? worktrees[0].path : root),
       providerStreamFns,

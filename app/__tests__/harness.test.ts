@@ -49,7 +49,7 @@ describe('compileRoadmap', () => {
       phases: [
         { name: 'script', code: { source: 'return 1' } },
         { name: 'fetch', http: { url: 'https://example.test' } },
-        { name: 'refine', loop: { body: agent('w'), maxIterations: 3 } },
+        { name: 'refine', loop: { body: agent('w'), maxIterations: 3, retryOnFailure: true } },
         { name: 'each', map: { over: '${items}', body: agent('w') } },
       ],
     });
@@ -87,6 +87,33 @@ describe('compileRoadmap', () => {
     const steps = compileRoadmap({ name: 'o', phases: [agent('review'), agent('review', { continueOnError: true })] });
     expect(steps.map(s => s.key)).toEqual(['review', 'review#2']);
     expect(steps.map(s => s.required)).toEqual([true, false]);
+  });
+
+  it('a loop with a plain body repeats as steps; a judge or retrying loop stays one engine step', () => {
+    const body: Node = {
+      name: 'pass',
+      phases: [agent('implement'), { name: 'checks', parallel: [agent('review'), agent('qa')] }, agent('decide')],
+    };
+    const steps = compileRoadmap({
+      name: 'o',
+      phases: [
+        agent('plan'),
+        { name: 'build', loop: { body, maxIterations: 3, until: 'DECISION: SHIP' } },
+        agent('open-pr', { lock: true }),
+        { name: 'judged', loop: { body: agent('w'), maxIterations: 2, judge: 'agents/judge.md' } },
+      ],
+    });
+    expect(steps.map(s => [s.key, s.rank, s.loop?.name ?? null, s.group ?? null])).toEqual([
+      ['plan', 0, null, null],
+      ['implement', 1, 'build', null],
+      ['review', 2, 'build', 'checks'],
+      ['qa', 2, 'build', 'checks'],
+      ['decide', 3, 'build', null],
+      ['open-pr', 4, null, null],
+      ['judged', 5, null, null],
+    ]);
+    expect(steps[1].loop).toMatchObject({ max: 3, until: 'DECISION: SHIP', carryContext: true });
+    expect(steps[6]).toMatchObject({ kind: 'engine', engineKind: 'loop' });
   });
 
   it('a root that is itself a body is one step', () => {
@@ -170,6 +197,29 @@ describe('HarnessProgress', () => {
     expect(p.statusOf('a')).toBe('done');
     expect(p.available().map(s => s.key)).toEqual(['x', 'y']);
     expect(p.checklist()).toContain('[x] 1. a');
+  });
+});
+
+describe('HarnessProgress passes', () => {
+  it('a finished pass can open the next; each pass checkpoints under its own key', () => {
+    const steps = compileRoadmap({
+      name: 'o',
+      phases: [{ name: 'build', loop: { body: { name: 'b', phases: [agent('impl'), agent('decide')] }, maxIterations: 3 } }, agent('ship')],
+    });
+    const p = new HarnessProgress(steps, 'strict');
+    const step = (k: string) => p.get(k)!;
+    expect(p.checkpointKey(step('impl'))).toBe('harness/build@1/impl');
+    expect(p.checkpointKey(step('ship'))).toBe('harness/ship');
+    p.start(step('impl'));
+    p.finish(step('impl'), { status: 'done' });
+    expect(p.passComplete('build')).toBe(false);
+    p.start(step('decide'));
+    p.finish(step('decide'), { status: 'done' });
+    expect(p.passComplete('build')).toBe(true);
+    expect(p.nextPass('build')).toBe(2);
+    expect(p.available().map(s => s.key)).toEqual(['impl']);
+    expect(p.checkpointKey(step('impl'))).toBe('harness/build@2/impl');
+    expect(p.checklist()).toContain('pass 2 of at most 3');
   });
 });
 

@@ -51,6 +51,22 @@ export type HarnessStep = {
   finally: boolean;
   /** Engine steps: which body runs (`code`, `http`, `loop`, `map`, …). */
   engineKind?: string;
+  /** A step inside a `loop` the harness repeats itself: the loop's name and
+   *  how it decides to go round again (the engine applies it after each
+   *  pass, exactly as a pipeline run would). */
+  loop?: HarnessLoop;
+  node: Node;
+};
+
+export type HarnessLoop = {
+  name: string;
+  max: number;
+  until?: string;
+  whileOutput?: string;
+  /** Frame a later pass's input as a refinement of the work so far
+   *  (`loop.carryContext`, default on). */
+  carryContext: boolean;
+  /** The loop node itself (its `as`, `description`). */
   node: Node;
 };
 
@@ -80,10 +96,28 @@ function engineKindOf(node: Node): string | undefined {
 /** A node the harness can do as ONE step of its own (not a section). */
 function leafKind(node: Node): HarnessStepKind | null {
   if (Array.isArray(node.phases) || Array.isArray(node.parallel)) return null;
+  if (repeatableLoop(node)) return null;
   if (engineKindOf(node)) return 'engine';
   if (node.skill) return 'skill';
   if (node.agent) return 'task';
   return null;
+}
+
+/** Whether every node under a body flattens to single steps (no nested
+ *  section of its own kind that would need its own order). */
+function flattensToSteps(node: Node): boolean {
+  if (Array.isArray(node.phases)) return node.phases.every(flattensToSteps);
+  if (Array.isArray(node.parallel)) return node.parallel.every(m => leafKind(m) !== null);
+  return leafKind(node) !== null;
+}
+
+/** A `loop` the harness can repeat itself: its stop rule is the engine's to
+ *  apply after each pass (`until` / `whileOutput` / `maxIterations`), and its
+ *  body is a plain sequence of steps. A `judge` (another agent decides) or
+ *  `retryOnFailure` loop runs as one engine step instead. */
+function repeatableLoop(node: Node): boolean {
+  const l = node.loop;
+  return !!l && !l.judge && !l.retryOnFailure && !!l.body && flattensToSteps(l.body);
 }
 
 /** Turn an orchestration into the ordered list of steps a harness follows.
@@ -102,7 +136,7 @@ export function compileRoadmap(root: Node): HarnessStep[] {
   };
   // A gate on a section guards entry to its FIRST step only.
   const pendingGate: { v?: string } = {};
-  type Ctx = { section?: string; group?: string; required: boolean; isFinally: boolean };
+  type Ctx = { section?: string; group?: string; required: boolean; isFinally: boolean; loop?: HarnessLoop };
 
   const push = (node: Node, kind: HarnessStepKind, ctx: Ctx, stepRank: number) => {
     const gate = node.lock ? node.name : pendingGate.v;
@@ -121,6 +155,7 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       required: ctx.required && node.continueOnError !== true,
       finally: ctx.isFinally || node.finally === true,
       ...(kind === 'engine' ? { engineKind: engineKindOf(node) } : {}),
+      ...(ctx.loop ? { loop: ctx.loop } : {}),
       node,
     });
   };
@@ -131,6 +166,25 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       push(node, kind, ctx, rank++);
       return;
     }
+    if (repeatableLoop(node) && !ctx.loop) {
+      if (node.lock) pendingGate.v = node.name;
+      const l = node.loop!;
+      visit(l.body, {
+        ...ctx,
+        section: ctx.section ? `${ctx.section} › ${node.name}` : node.name,
+        required: ctx.required && node.continueOnError !== true,
+        isFinally: ctx.isFinally || node.finally === true,
+        loop: {
+          name: node.name,
+          max: Math.max(1, l.maxIterations ?? 3),
+          ...(l.until ? { until: l.until } : {}),
+          ...(l.whileOutput ? { whileOutput: l.whileOutput } : {}),
+          carryContext: l.carryContext !== false,
+          node,
+        },
+      });
+      return;
+    }
     if (Array.isArray(node.phases)) {
       if (node.lock) pendingGate.v = node.name;
       const section = ctx.section ? `${ctx.section} › ${node.name}` : node.name;
@@ -138,6 +192,7 @@ export function compileRoadmap(root: Node): HarnessStep[] {
         section,
         required: ctx.required && node.continueOnError !== true,
         isFinally: ctx.isFinally || node.finally === true,
+        ...(ctx.loop ? { loop: ctx.loop } : {}),
       };
       const regular = node.phases.filter(p => p.finally !== true);
       const finals = node.phases.filter(p => p.finally === true);
@@ -164,6 +219,12 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       }
       push(node, 'engine', ctx, rank++);
       steps[steps.length - 1].engineKind = 'parallel';
+      return;
+    }
+    // A loop inside a loop the harness repeats, or one it can't: the engine
+    // runs it as written.
+    if (node.loop) {
+      push(node, 'engine', ctx, rank++);
       return;
     }
     // No body we know — nothing to do as a step.
@@ -268,16 +329,56 @@ export class HarnessProgress {
   readonly follow: HarnessFollow;
   private readonly status = new Map<string, StepStatus>();
   private readonly records = new Map<string, StepRecord>();
+  /** Current pass of each repeated loop (1-based). */
+  private readonly passes = new Map<string, number>();
   private activeKey: string | null = null;
 
-  constructor(steps: HarnessStep[], follow: HarnessFollow, restored?: Map<string, StepRecord>) {
+  constructor(
+    steps: HarnessStep[],
+    follow: HarnessFollow,
+    restored?: Map<string, StepRecord>,
+    restoredPasses?: Map<string, number>,
+  ) {
     this.steps = steps;
     this.follow = follow;
+    for (const [loop, n] of restoredPasses ?? []) this.passes.set(loop, n);
     for (const s of steps) {
       const r = restored?.get(s.key);
       this.status.set(s.key, r ? r.status : 'pending');
       if (r) this.records.set(s.key, r);
     }
+  }
+
+  /** The pass a repeated loop is on (1 for the first). */
+  passOf(loopName: string): number {
+    return this.passes.get(loopName) ?? 1;
+  }
+
+  /** Where a step's end is checkpointed: `harness/<key>`, or for a step a
+   *  loop repeats `harness/<loop>@<pass>/<key>` — each pass its own. */
+  checkpointKey(s: HarnessStep): string {
+    return HARNESS_CHECKPOINT_PREFIX + (s.loop ? `${s.loop.name}@${this.passOf(s.loop.name)}/${s.key}` : s.key);
+  }
+
+  /** The steps of one repeated loop. */
+  loopSteps(loopName: string): HarnessStep[] {
+    return this.steps.filter(s => s.loop?.name === loopName);
+  }
+
+  /** Every step of this loop's current pass is settled. */
+  passComplete(loopName: string): boolean {
+    return this.loopSteps(loopName).every(s => this.settled(s));
+  }
+
+  /** Start the loop's next pass: its steps are open again. */
+  nextPass(loopName: string): number {
+    const n = this.passOf(loopName) + 1;
+    this.passes.set(loopName, n);
+    for (const s of this.loopSteps(loopName)) {
+      this.status.set(s.key, 'pending');
+      this.records.delete(s.key);
+    }
+    return n;
   }
 
   get(key: string): HarnessStep | undefined {
@@ -301,7 +402,7 @@ export class HarnessProgress {
     return this.activeKey ? this.get(this.activeKey) : undefined;
   }
 
-  private settled(s: HarnessStep): boolean {
+  settled(s: HarnessStep): boolean {
     const st = this.statusOf(s.key);
     return st === 'done' || st === 'skipped' || (st === 'failed' && !s.required);
   }
@@ -370,8 +471,9 @@ export class HarnessProgress {
     return this.steps.filter(s => this.records.get(s.key)?.status === 'skipped' && this.records.get(s.key)?.by === 'harness');
   }
 
-  /** The checklist the agent reads (list_steps, and its first message). */
-  checklist(): string {
+  /** The checklist the agent reads (list_steps, and its first message).
+   *  `approved`: gates already approved, which no longer stop anything. */
+  checklist(approved?: ReadonlySet<string>): string {
     const mark: Record<StepStatus, string> = {
       pending: '[ ]',
       active: '[>]',
@@ -387,8 +489,9 @@ export class HarnessProgress {
           `${mark[st]} ${i + 1}. ${s.name}`,
           s.key !== s.name ? `(id "${s.key}")` : '',
           `— ${kindLabel(s)}`,
-          s.gate ? '· needs approval first' : '',
+          s.gate ? (approved?.has(s.gate) ? '· approved' : '· needs approval first') : '',
           s.group ? `· with the other "${s.group}" steps, in any order` : '',
+          s.loop ? `· in "${s.loop.name}", pass ${this.passOf(s.loop.name)} of at most ${s.loop.max}` : '',
           s.finally ? '· finalizer' : '',
           !s.required ? '· optional (may fail)' : '',
           next.has(s.key) ? '← next' : '',
@@ -424,6 +527,7 @@ export function buildHarnessSystemPrompt(opts: {
   orchestration: Node;
   progress: HarnessProgress;
   extra?: string;
+  approvedGates?: ReadonlySet<string>;
 }): string {
   const { orchestration: o, progress } = opts;
   return [
@@ -431,6 +535,8 @@ export function buildHarnessSystemPrompt(opts: {
     o.description ? `What it is for: ${o.description}` : '',
     '',
     FOLLOW_RULES[progress.follow],
+    '',
+    'Steps marked "in <loop>, pass N" repeat: when their pass is done the engine decides, by the loop\'s own rule, whether to go round again — then they open up for the next pass.',
     '',
     'How each step works:',
     '1. start_step(step) — the engine checks the order and gives you the step\'s instructions, its input and the tools it allows.',
@@ -443,7 +549,7 @@ export function buildHarnessSystemPrompt(opts: {
     'When every step is done, end your turn with a short summary of the run.',
     '',
     'The steps:',
-    progress.checklist(),
+    progress.checklist(opts.approvedGates),
     opts.extra ? `\nGuidance for this orchestration:\n${opts.extra}` : '',
   ]
     .filter(line => line !== null)
@@ -477,9 +583,10 @@ export function harnessToolId(name: HarnessToolName): string {
   return `mcp__${HARNESS_TOOL_SERVER}__${name}`;
 }
 
-/** Tools any step may use while it is active, and between steps: reading
- *  and the step tools themselves. */
-export const HARNESS_ALWAYS_ALLOWED = ['Read', 'Glob', 'Grep', 'TodoWrite'];
+/** Tools any step may use while it is active, and between steps: reading,
+ *  and ToolSearch — Claude Code loads MCP tools (the step tools among them)
+ *  on demand, so without it the agent can't reach start_step at all. */
+export const HARNESS_ALWAYS_ALLOWED = ['Read', 'Glob', 'Grep', 'TodoWrite', 'ToolSearch'];
 
 /** One engine tool the harness agent can call. Every parameter is a string;
  *  a name ending in `?` is optional. */
@@ -505,6 +612,70 @@ export type HarnessStreamOptions = {
   /** Asked before every tool call: a reason to refuse it, or null to allow. */
   toolGate?: (toolName: string, input: unknown) => string | null;
 };
+
+/** Where a terminal-driven leg's step tools are served, and how to reach
+ *  them. Carries the leg's token — never written to the event log. */
+export type HarnessTerminalLeg = {
+  url: string;
+  token: string;
+  sessionId: string;
+  cwd?: string;
+};
+
+/** How a host lets a person drive a harness run from a terminal: one object
+ *  per run, shared by the host's API and the run's executor. Only one driver
+ *  at a time — the server's agent OR a terminal. */
+export type HarnessControl = {
+  /** The host asked for the next leg to be driven from a terminal. */
+  wantTerminal: boolean;
+  /** Executor-set while the server's agent drives: end its leg so a terminal
+   *  can take over (deferred while an engine step is running). */
+  interruptLeg: (() => void) | null;
+  /** Executor-set while a terminal drives: end that leg — the person handed
+   *  the run back to the server's agent. */
+  endTerminalLeg: ((why: 'handback') => void) | null;
+  /** Host-provided: serve the step tools to a terminal session. */
+  serveTools: ((tools: HarnessToolSpec[]) => Promise<{ url: string; token: string; close(): void }>) | null;
+  /** Executor-set while a terminal drives: where its tools are. */
+  terminal: HarnessTerminalLeg | null;
+};
+
+export function newHarnessControl(serveTools: HarnessControl['serveTools'] = null): HarnessControl {
+  return { wantTerminal: false, interruptLeg: null, endTerminalLeg: null, serveTools, terminal: null };
+}
+
+/** The shell command that resumes the harness agent's session in a terminal
+ *  — with the run's step tools when a terminal leg is live. POSIX-quoted. */
+export function harnessTerminalCommand(opts: {
+  sessionId: string;
+  cwd?: string;
+  runId?: string;
+  tools?: { url: string; token: string };
+}): string {
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const parts = [`claude --resume ${opts.sessionId}`];
+  if (opts.tools) {
+    const config = {
+      mcpServers: {
+        [HARNESS_TOOL_SERVER]: {
+          type: 'http',
+          url: opts.tools.url,
+          headers: { Authorization: `Bearer ${opts.tools.token}` },
+        },
+      },
+    };
+    parts.push(
+      `--mcp-config ${q(JSON.stringify(config))}`,
+      `--allowedTools ${q(`mcp__${HARNESS_TOOL_SERVER}`)}`,
+      `--append-system-prompt ${q(
+        `You are driving the sammy-pack run${opts.runId ? ` ${opts.runId}` : ''} as its harness. ` +
+          `Use the mcp__${HARNESS_TOOL_SERVER} step tools — list_steps first, then start_step / complete_step / run_step. ` +
+          'The engine still checks the order and holds the gates; the run page follows along.',
+      )}`,
+    );
+  }
+  return `${opts.cwd ? `cd ${q(opts.cwd)} && ` : ''}${parts.join(' ')}`;
+}
 
 /** A FIFO of events produced outside the agent's stream (by the step tools,
  *  while the agent waits on them), read alongside it. */

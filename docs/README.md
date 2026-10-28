@@ -9,6 +9,7 @@ rest is reference for when you need it.
 | [`patterns.md`](patterns.md) | The orchestration shapes — sequential, fan-out, converge, loops, routing, subflows — and when to reach for each |
 | [`schema.md`](schema.md) | The formal spec: every node body kind and decorator, with examples |
 | [`architecture.md`](architecture.md) | How execution works: server-owned runs, durability, checkpoint/resume, CLI↔web parity, sandbox policy |
+| [`harness.md`](harness.md) | Harness runs: one agent follows the steps and does each itself (skills, strictness, gates, taking a run over in a terminal) |
 | [`triggers.md`](triggers.md) | Firing runs from outside: webhooks, cron, polling, events, queues, deploys; durable deliveries; chaining runs |
 | [`PLUGGABLE_QUEUE_SOURCES.md`](PLUGGABLE_QUEUE_SOURCES.md) | ADR — pluggable broker adapters (SQS/Kafka/Rabbit) behind the `queue` trigger: the narrow-waist Source contract, ack-on-2xx reliability, out-of-process runners |
 | [`deployment.md`](deployment.md) | Standalone server + workers, SQLite→Postgres, auth (API token / JWT), spend caps, env-var reference |

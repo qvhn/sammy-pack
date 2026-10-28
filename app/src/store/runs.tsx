@@ -16,7 +16,7 @@ import {
   runOrchestration,
   type RunEvent,
 } from '../llm/executor';
-import type { Node } from '../types';
+import type { ExecutionMode, HarnessFollow, Node } from '../types';
 import {
   collectNodeNames,
   deriveRunStatus,
@@ -33,6 +33,10 @@ import {
 } from './apiKey';
 import { buildProviderRegistry } from '../llm/providers';
 import { useToast } from './toast';
+
+/** How the Run dialog asked this run to execute (absent: as the
+ *  orchestration says). */
+export type RunModeOptions = { execution?: ExecutionMode; follow?: HarnessFollow };
 
 export type RunStatus =
   | 'running'
@@ -123,6 +127,9 @@ type Ctx = {
       string,
       { value?: string; file?: { filename?: string; mediaType?: string; data?: string } }
     >,
+    /** Pipeline or harness for this run, and a harness's strictness —
+     *  overriding the orchestration's own (the Run dialog's choice). */
+    runOptions?: RunModeOptions,
   ) => boolean;
   /** Resume the currently-active run if it's in the paused state. */
   resumeServerRun: () => void;
@@ -955,6 +962,7 @@ export function RunsProvider({ children }: { children: ReactNode }) {
         string,
         { value?: string; file?: { filename?: string; mediaType?: string; data?: string } }
       >,
+      runOptions?: RunModeOptions,
     ): boolean => {
       const authMode = getAuthMode();
       if (authMode !== 'claude-code-proxy') {
@@ -993,6 +1001,8 @@ export function RunsProvider({ children }: { children: ReactNode }) {
               model,
               allowAgentTools,
               inputs,
+              ...(runOptions?.execution ? { execution: runOptions.execution } : {}),
+              ...(runOptions?.follow ? { follow: runOptions.follow } : {}),
             }),
           });
           if (!res.ok) {

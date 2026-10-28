@@ -11,7 +11,7 @@
  */
 
 import { RunPauseRequested, runOrchestration, type RunEvent, type StreamFn } from '../src/llm/executor';
-import type { HarnessToolSpec } from '../src/llm/harness';
+import { newHarnessControl, type HarnessControl, type HarnessToolSpec } from '../src/llm/harness';
 import { computeDegradation } from '../src/server/degradation';
 import type { Node } from '../src/types';
 
@@ -328,5 +328,215 @@ describe('harness run', () => {
     expect(brief).toContain('Run the skill "triage-ticket" with the Skill tool');
     expect(calls[0].harness?.skills).toEqual(['triage-ticket']);
     expect(verdicts).toEqual([expect.stringMatching(/runs the skill "triage-ticket", not "other"/), null]);
+  });
+
+  describe('driven from a terminal', () => {
+    /** A control whose "listener" just hands the served tools to the test. */
+    function fakeTerminal() {
+      const served: { tools: Tools | null; closed: number } = { tools: null, closed: 0 };
+      const control: HarnessControl = newHarnessControl(async tools => {
+        served.tools = Object.fromEntries(tools.map(t => [t.name, (a: Record<string, string>) => t.handler(a)]));
+        return { url: 'http://127.0.0.1:1/mcp', token: 'tok', close: () => void (served.closed += 1) };
+      });
+      const whenServed = async () => {
+        for (let i = 0; i < 200 && !control.terminal; i++) await new Promise(r => setTimeout(r, 5));
+        if (!control.terminal) throw new Error('terminal leg never started');
+        return served.tools!;
+      };
+      return { control, served, whenServed };
+    }
+
+    it('a terminal can drive the whole run; the engine still checks the order', async () => {
+      const { control, served, whenServed } = fakeTerminal();
+      control.wantTerminal = true;
+      const { streamFn, calls } = scriptedAgent([]);
+      const running = run(tree, streamFn, { harnessControl: control });
+      const t = await whenServed();
+      expect((await t.start_step({ step: 'build' })).text).toMatch(/can't start yet/);
+      await t.start_step({ step: 'plan' });
+      await t.complete_step({ step: 'plan', output: 'p' });
+      await t.start_step({ step: 'shout' });
+      await t.run_step({ step: 'shout' });
+      await t.start_step({ step: 'build' });
+      await t.complete_step({ step: 'build', output: 'b' });
+      const { events, thrown } = await running;
+      expect(thrown).toBeNull();
+      expect(calls).toHaveLength(0);
+      expect(of(events, 'harness-start')[0]).toMatchObject({ driver: 'terminal' });
+      expect(of(events, 'run-end')).toHaveLength(1);
+      expect(served.closed).toBe(1);
+      expect(control.terminal).toBeNull();
+      expect(JSON.stringify(events)).not.toContain('tok');
+    });
+
+    it('handing back lets the server agent continue the same session', async () => {
+      const { control, whenServed } = fakeTerminal();
+      control.wantTerminal = true;
+      const { streamFn, calls } = scriptedAgent([
+        async function* (t) {
+          await t.start_step({ step: 'shout' });
+          await t.run_step({ step: 'shout' });
+          await t.start_step({ step: 'build' });
+          await t.complete_step({ step: 'build', output: 'b' });
+        },
+      ]);
+      const running = run(tree, streamFn, { harnessControl: control });
+      const t = await whenServed();
+      await t.start_step({ step: 'plan' });
+      await t.complete_step({ step: 'plan', output: 'p' });
+      control.endTerminalLeg!('handback');
+      const { events, thrown } = await running;
+      expect(thrown).toBeNull();
+      expect(calls).toHaveLength(1);
+      const sessions = of(events, 'harness-start');
+      expect(sessions.map(e => e.driver)).toEqual(['terminal', 'server']);
+      expect(calls[0].harness?.resume).toBe(sessions[0].sessionId);
+      expect(calls[0].messages[0].content).toMatch(/handed it back to you/);
+    });
+
+    it('taking over ends the server agent\'s leg, and the terminal picks up', async () => {
+      const { control, whenServed } = fakeTerminal();
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          await t.start_step({ step: 'plan' });
+          await t.complete_step({ step: 'plan', output: 'p' });
+          // The person clicks "Take over in a terminal".
+          control.wantTerminal = true;
+          control.interruptLeg!();
+          yield { type: 'text-delta', text: 'still talking' };
+          yield { type: 'text-delta', text: 'never seen' };
+        },
+      ]);
+      const running = run(tree, streamFn, { harnessControl: control });
+      const t = await whenServed();
+      expect((await t.list_steps({})).text).toContain('[x] 1. plan');
+      await t.start_step({ step: 'shout' });
+      await t.run_step({ step: 'shout' });
+      await t.start_step({ step: 'build' });
+      await t.complete_step({ step: 'build', output: 'b' });
+      const { events, thrown } = await running;
+      expect(thrown).toBeNull();
+      expect(of(events, 'harness-start').map(e => e.driver)).toEqual(['server', 'terminal']);
+      expect(of(events, 'phase-delta').map(e => e.text)).not.toContain('never seen');
+      expect(of(events, 'run-end')).toHaveLength(1);
+    });
+
+    it('a terminal that goes quiet pauses the run instead of holding it', async () => {
+      const prev = process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC;
+      process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC = '0.2';
+      try {
+        const { control, served, whenServed } = fakeTerminal();
+        control.wantTerminal = true;
+        const running = run(tree, scriptedAgent([]).streamFn, { harnessControl: control });
+        await whenServed();
+        const { events, thrown } = await running;
+        expect(thrown).toBeInstanceOf(RunPauseRequested);
+        expect((thrown as RunPauseRequested).pausedFor).toBe('harness');
+        expect(of(events, 'harness-notice').some(e => /pausing the run/.test(e.message))).toBe(true);
+        expect(served.closed).toBe(1);
+        expect(control.wantTerminal).toBe(false);
+      } finally {
+        if (prev === undefined) delete process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC;
+        else process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC = prev;
+      }
+    });
+  });
+
+  describe('a loop the harness repeats', () => {
+    const looped: Node = {
+      name: 'ticket',
+      execution: 'harness',
+      phases: [
+        {
+          name: 'build',
+          loop: {
+            maxIterations: 3,
+            until: 'DECISION: SHIP',
+            body: {
+              name: 'pass',
+              phases: [
+                { name: 'implement', agent: 'agents/builder.md', as: 'change' },
+                { name: 'decide', agent: 'agents/planner.md' },
+              ],
+            },
+          },
+        },
+        { name: 'open-pr', agent: 'agents/builder.md', prompt: 'Open a PR for ${change}' },
+      ],
+    };
+
+    it('goes round until the loop\'s rule says stop, then moves on', async () => {
+      const replies: string[] = [];
+      let secondPassBrief = '';
+      let prBrief = '';
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          await t.start_step({ step: 'implement' });
+          await t.complete_step({ step: 'implement', output: 'v1' });
+          await t.start_step({ step: 'decide' });
+          replies.push((await t.complete_step({ step: 'decide', output: 'DECISION: ITERATE — tests missing' })).text);
+          secondPassBrief = (await t.start_step({ step: 'implement' })).text;
+          await t.complete_step({ step: 'implement', output: 'v2' });
+          await t.start_step({ step: 'decide' });
+          replies.push((await t.complete_step({ step: 'decide', output: 'DECISION: SHIP' })).text);
+          prBrief = (await t.start_step({ step: 'open-pr' })).text;
+          await t.complete_step({ step: 'open-pr', output: 'PR #7' });
+        },
+      ]);
+      const { events, thrown } = await run(looped, streamFn);
+      expect(thrown).toBeNull();
+      expect(replies[0]).toMatch(/Pass 1 of "build" is done, but its output doesn't contain "DECISION: SHIP" — the engine opened pass 2 of at most 3/);
+      expect(secondPassBrief).toContain('[Refinement iteration 2 of 3.');
+      expect(secondPassBrief).toContain('DECISION: ITERATE — tests missing');
+      expect(replies[1]).toMatch(/"build" is finished after pass 2: its output contains "DECISION: SHIP"/);
+      expect(prBrief).toContain('Open a PR for v2');
+      const keys = of(events, 'harness-step').filter(e => e.status === 'done').map(e => e.replayKey);
+      expect(keys).toEqual([
+        'harness/__session',
+        'harness/build@1/implement',
+        'harness/build@1/decide',
+        'harness/build@2/implement',
+        'harness/build@2/decide',
+        'harness/build',
+        'harness/open-pr',
+      ]);
+      expect(of(events, 'loop-iteration').map(e => e.iteration)).toEqual([2]);
+      expect(of(events, 'run-end')).toHaveLength(1);
+    });
+
+    it('a restart in the middle of pass 2 resumes that pass', async () => {
+      const first = scriptedAgent([
+        async function* (t) {
+          await t.start_step({ step: 'implement' });
+          await t.complete_step({ step: 'implement', output: 'v1' });
+          await t.start_step({ step: 'decide' });
+          await t.complete_step({ step: 'decide', output: 'DECISION: ITERATE' });
+          await t.start_step({ step: 'implement' });
+          await t.complete_step({ step: 'implement', output: 'v2' });
+          throw new Error('server restarted');
+        },
+      ]);
+      const leg1 = await run(looped, first.streamFn);
+      expect(of(leg1.events, 'run-error')).toHaveLength(1);
+      const replayOutputs = Object.fromEntries(
+        of(leg1.events, 'harness-step').filter(e => e.replayKey && e.record).map(e => [e.replayKey!, e.record!]),
+      );
+      let checklist = '';
+      const second = scriptedAgent([
+        async function* (t) {
+          checklist = (await t.list_steps({})).text;
+          expect((await t.start_step({ step: 'implement' })).text).toMatch(/already done/);
+          await t.start_step({ step: 'decide' });
+          await t.complete_step({ step: 'decide', output: 'DECISION: SHIP' });
+          await t.start_step({ step: 'open-pr' });
+          await t.complete_step({ step: 'open-pr', output: 'PR' });
+        },
+      ]);
+      const leg2 = await run(looped, second.streamFn, { replayOutputs });
+      expect(leg2.thrown).toBeNull();
+      expect(checklist).toContain('[x] 1. implement');
+      expect(checklist).toContain('pass 2 of at most 3');
+      expect(of(leg2.events, 'run-end')).toHaveLength(1);
+    });
   });
 });

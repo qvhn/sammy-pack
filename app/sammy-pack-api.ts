@@ -173,7 +173,12 @@ import {
   readHarnessSettingsSync,
   writeHarnessSettings,
 } from './src/server/harness-settings';
-import { isHarnessFollow, resolveFollow } from './src/llm/harness';
+import { harnessTerminalCommand, isHarnessFollow, resolveFollow } from './src/llm/harness';
+import {
+  existingHarnessControl,
+  harnessControlFor,
+  openTerminalWith,
+} from './src/server/harness-session';
 import {
   buildOrchestrationCard,
   buildRootCard,
@@ -2812,7 +2817,8 @@ export async function mountSammyApi(
                segs[1] === 'stop' || segs[1] === 'resume' ||
                segs[1] === 'fork' || segs[1] === 'trace' ||
                segs[1] === 'gate' || segs[1] === 'signal' ||
-               segs[1] === 'replay' || segs[1] === 'artifacts')) {
+               segs[1] === 'replay' || segs[1] === 'artifacts' ||
+               segs[1] === 'terminal' || segs[1] === 'handback')) {
             return next();
           }
 
@@ -8526,6 +8532,119 @@ export async function mountSammyApi(
           });
           if (!result.ok) return sendError(res, 409, result.reason);
           return sendJson(res, 200, { ok: true });
+        }
+
+        // GET  /api/runs/:id/terminal → { live, command } — whether a terminal
+        //      is driving this harness run, and (when one is) the command
+        //      that opens it, with the leg's one-time token.
+        // POST /api/runs/:id/terminal { open? } → take the run over in a
+        //      terminal: a running harness run ends its server agent's leg; a
+        //      run paused off a gate (or interrupted / errored) resumes with a
+        //      terminal driving. `open: true` also opens a terminal window on
+        //      the server's machine (local requests only).
+        // POST /api/runs/:id/handback → the terminal's leg ends and the
+        //      server's agent continues the same session.
+        // One driver at a time; the terminal's step tools are served only on
+        // 127.0.0.1 and only while its leg lasts (serveHarnessToolsHttp).
+        if (action === 'terminal' || action === 'handback') {
+          const method = (req.method ?? 'GET').toUpperCase();
+          const stored = await store.getRun(id, extractOwnerId(req));
+          if (!stored) return sendError(res, 404, 'Run not found');
+          const snap = stored.orchestrationSnapshot as Node | null;
+          if (snap?.execution !== 'harness') {
+            return sendError(res, 409, 'Only a harness run can be driven from a terminal.');
+          }
+          const liveCommand = (): string | null => {
+            const t = existingHarnessControl(id)?.terminal;
+            return t ? harnessTerminalCommand({ sessionId: t.sessionId, cwd: t.cwd, runId: id, tools: t }) : null;
+          };
+          if (action === 'handback') {
+            if (method !== 'POST') return sendError(res, 405, 'Method not allowed');
+            const control = existingHarnessControl(id);
+            if (!control?.endTerminalLeg) return sendError(res, 409, 'No terminal is driving this run.');
+            control.wantTerminal = false;
+            control.endTerminalLeg('handback');
+            return sendJson(res, 200, { ok: true });
+          }
+          if (method === 'GET') {
+            const command = liveCommand();
+            return sendJson(res, 200, { live: command !== null, command });
+          }
+          if (method !== 'POST') return sendError(res, 405, 'Method not allowed');
+          let body: { open?: unknown } = {};
+          try {
+            const raw = await readBody(req);
+            body = raw.trim() ? JSON.parse(raw) : {};
+          } catch {
+            return sendError(res, 400, 'Invalid JSON');
+          }
+          const control = harnessControlFor(id);
+          if (!control.terminal) {
+            if (stored.status === 'running') {
+              if (!isActiveServerRun(id)) {
+                return sendError(res, 409, 'This run is not executing in this server process.');
+              }
+              control.wantTerminal = true;
+              control.interruptLeg?.();
+            } else if (stored.status === 'paused' || stored.status === 'interrupted' || stored.status === 'error') {
+              // A gate is decided on the run page (or the gate API) — taking
+              // the run over must not approve it as a side effect.
+              const gate = stored.status === 'paused' && !pendingWaitOf(stored.stateJson) && stored.pausedFor !== 'harness'
+                ? stored.pausedFor
+                : null;
+              if (gate) {
+                return sendError(res, 409, `The run is waiting for approval of "${gate}" — approve or reject it first.`);
+              }
+              const ctx = await loadRunContext(stored.orchestrationName, { orchestrationOverride: snap });
+              if (!ctx) return sendError(res, 404, `Orchestration not found: ${stored.orchestrationName}`);
+              control.wantTerminal = true;
+              const result = await resumeServerRun({
+                store,
+                id,
+                budgetGate: (await loadBudgetState(budgetFile, store, stored.ownerId)).gate,
+                onTerminal: buildTerminalHook(stored.orchestrationName, ctx.orchestration, stored.ownerId),
+                divergence: ctx.orchestration.notify?.divergence,
+                buildEventSource: (signal, replayOutputs, autoApproveLocks, _gms, runId, waits, inputs) =>
+                  buildExecutorSource(
+                    ctx,
+                    {
+                      initialInput: stored.initialInput ?? undefined,
+                      allowAgentTools: true,
+                      replayOutputs,
+                      autoApproveLocks,
+                      ownerId: stored.ownerId,
+                      runId,
+                      pendingWaits: waits.pendingWaits,
+                      deliveredSignals: waits.deliveredSignals,
+                      resolvedInputs: inputs,
+                    },
+                    signal,
+                  ),
+              });
+              if (!result.ok) {
+                control.wantTerminal = false;
+                return sendError(res, 409, result.reason);
+              }
+            } else {
+              return sendError(res, 409, `Run is ${stored.status} — there is nothing left to drive.`);
+            }
+            // The executor serves the tools when its terminal leg starts.
+            const deadline = Date.now() + 60_000;
+            while (!control.terminal && Date.now() < deadline) await new Promise(r => setTimeout(r, 200));
+            if (!control.terminal) {
+              control.wantTerminal = false;
+              return sendError(res, 504, 'The run did not hand over within a minute (an engine step may still be running). Try again.');
+            }
+          }
+          const command = liveCommand()!;
+          let opened: { opened: boolean; reason?: string } | undefined;
+          if (body.open === true) {
+            const remote = req.socket.remoteAddress ?? '';
+            opened = /^(127\.|::1$|::ffff:127\.)/.test(remote)
+              ? await openTerminalWith(command)
+              : { opened: false, reason: 'the server is on another machine — run the command there' };
+          }
+          return sendJson(res, 200, { live: true, command, ...(opened ? { opened } : {}) });
         }
 
         // POST /api/runs/:id/signal   body: { signal: string, payload?: any }

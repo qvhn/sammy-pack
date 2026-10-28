@@ -403,6 +403,16 @@ export function scrubEvent<T>(ev: T, secrets?: Iterable<string>): T {
       // `input` is the tool's arguments (e.g. a Bash command) — deep-scrub
       // so a secret echoed in a command string never lands in the log.
       return { ...ev, input: scrubDeep(e.input, secrets) };
+    // A harness step's checkpoint record carries the step's output (JSON —
+    // a redaction marker keeps it valid JSON), and its reason is free text.
+    case 'harness-step':
+      return {
+        ...ev,
+        ...(e.reason != null ? { reason: scrubSecrets(String(e.reason), secrets) } : {}),
+        ...(e.record != null ? { record: scrubSecrets(String(e.record), secrets) } : {}),
+      };
+    case 'harness-notice':
+      return { ...ev, message: scrubSecrets(String(e.message ?? ''), secrets) };
     default:
       return ev;
   }
