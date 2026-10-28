@@ -169,7 +169,12 @@ export function harnessControlFor(runId: string): HarnessControl {
     c = newHarnessControl(serveHarnessToolsHttp);
     controls.set(runId, c);
     // Oldest first: a run that finished long ago no longer needs its handle.
-    while (controls.size > MAX_CONTROLS) controls.delete(controls.keys().next().value as string);
+    // Never one a run is using right now (a leg is live, or a takeover asked).
+    for (const [id, old] of controls) {
+      if (controls.size <= MAX_CONTROLS) break;
+      const busy = old.interruptLeg || old.endTerminalLeg || old.terminal || old.wantTerminal;
+      if (!busy && id !== runId) controls.delete(id);
+    }
   }
   return c;
 }

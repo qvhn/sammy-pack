@@ -181,6 +181,18 @@ export type SdkStreamChunk =
       postTokens?: number;
     }
   | {
+      /** Cumulative spend so far, after each turn's usage arrives — only when
+       *  the caller asked (`reportUsage`). Output tokens are final only on
+       *  `done`, so this is a running floor, not the bill. */
+      type: 'usage';
+      usage: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+      };
+    }
+  | {
       type: 'done';
       usage: {
         inputTokens: number;
@@ -307,6 +319,9 @@ export type SdkStreamParams = {
   /** Only these skills are listed to the agent and runnable by its Skill
    *  tool. Undefined leaves the SDK's own default. */
   skills?: string[];
+  /** Yield a `usage` chunk after each turn's usage arrives (a harness
+   *  session enforces budgets mid-leg with it). */
+  reportUsage?: boolean;
   /** The SDK entry point. Defaults to the real `query`, resolved by a dynamic
    *  import that jest cannot execute — so this is the seam through which the
    *  options this module builds and the errors it stamps are tested without
@@ -356,6 +371,7 @@ export async function* streamSdk(
     sessionId,
     resume,
     skills,
+    reportUsage = false,
   } = params;
 
   // Pre-approval allowlist: the built-in `tools` plus any explicitly pre-approved
@@ -583,6 +599,18 @@ export async function* streamSdk(
         // Accumulate (don't overwrite) — every turn's input re-sends the full
         // context, so the sum is the agent's true spend.
         ledger.record(ev.message.usage as unknown as TurnUsage);
+        if (reportUsage) {
+          lastYieldAt = Date.now();
+          yield {
+            type: 'usage',
+            usage: {
+              inputTokens: ledger.inputTokens,
+              outputTokens: ledger.outputTokens,
+              cacheReadTokens: ledger.cacheReadTokens,
+              cacheWriteTokens: ledger.cacheWriteTokens,
+            },
+          };
+        }
         // Circuit-breaker: a single agent cannot exceed maxAgentTokens. Catches
         // runaway sim-vision loops before they exhaust the whole usage quota.
         //

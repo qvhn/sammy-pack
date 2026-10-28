@@ -35,11 +35,15 @@ export const FOLLOW_HELP: Record<HarnessFollow, string> = {
   advisory: 'The steps are a guide: it may skip one, saying why, and the run is marked degraded.',
 };
 
-/** Whether a terminal is driving a harness run, and the command that opens
- *  it (with the leg's one-time token) when one is. */
+/** The live terminal leg's command (with its one-time token), or null —
+ *  never starts a takeover. A POST: the token is for callers who may write. */
 export async function getRunTerminal(runId: string): Promise<{ live: boolean; command: string | null }> {
-  const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/terminal`);
-  if (!res.ok) throw await requestFailure('GET /api/runs/:id/terminal', res);
+  const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/terminal`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ peek: true }),
+  });
+  if (!res.ok) throw await requestFailure('Reading the terminal command', res);
   return (await res.json()) as { live: boolean; command: string | null };
 }
 

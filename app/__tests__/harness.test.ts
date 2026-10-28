@@ -69,7 +69,7 @@ describe('compileRoadmap', () => {
     ]);
   });
 
-  it('finalizers go last; a section lock gates its first step only', () => {
+  it('finalizers go last; a section lock gates all of its steps', () => {
     const steps = compileRoadmap({
       name: 'o',
       phases: [
@@ -79,7 +79,8 @@ describe('compileRoadmap', () => {
       ],
     });
     expect(steps.map(s => s.key)).toEqual(['deploy', 'verify', 'own', 'report']);
-    expect(steps.map(s => s.gate ?? null)).toEqual(['ship', null, 'own', null]);
+    // A section's lock guards every step in it, not only the first.
+    expect(steps.map(s => s.gates)).toEqual([['ship'], ['ship'], ['own'], []]);
     expect(steps[3].finally).toBe(true);
   });
 
@@ -233,6 +234,19 @@ describe('checkpoint records', () => {
 });
 
 describe('HarnessEventQueue', () => {
+  it('an item a reader took but never passed on stays for the next reader', async () => {
+    const q = new HarnessEventQueue<number>();
+    q.push(1);
+    q.push(2);
+    const first = q.drain()[Symbol.asyncIterator]();
+    expect((await first.next()).value).toBe(1);
+    expect((await first.next()).value).toBe(2); // read ahead, then abandoned
+    q.close();
+    const rest: number[] = [];
+    for await (const n of q.drain()) rest.push(n);
+    expect(rest).toEqual([2]);
+  });
+
   it('delivers what was pushed before and after a reader waits, then ends on close', async () => {
     const q = new HarnessEventQueue<number>();
     q.push(1);

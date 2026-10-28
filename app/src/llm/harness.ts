@@ -35,9 +35,11 @@ export type HarnessStep = {
   /** Task steps: the agent file whose guidelines apply (`agents/x.md`). */
   agentPath?: string;
   skill?: string;
-  /** Name of the `lock` node guarding entry to this step — the step itself,
-   *  or an enclosing section whose first step this is. */
-  gate?: string;
+  /** Names of the `lock` nodes guarding this step, outermost first: every
+   *  enclosing section / parallel / loop that is locked, then the step's own.
+   *  A section's gate guards ALL its steps, so no order (loose, advisory, a
+   *  parallel group, a skipped first step) reaches one unapproved. */
+  gates: string[];
   /** Position in the declared order. Steps of one `parallel` share a rank:
    *  under `strict` they may go in any order among themselves. */
   rank: number;
@@ -134,13 +136,18 @@ export function compileRoadmap(root: Node): HarnessStep[] {
     seen.set(name, n);
     return n === 1 ? name : `${name}#${n}`;
   };
-  // A gate on a section guards entry to its FIRST step only.
-  const pendingGate: { v?: string } = {};
-  type Ctx = { section?: string; group?: string; required: boolean; isFinally: boolean; loop?: HarnessLoop };
+  type Ctx = {
+    section?: string;
+    group?: string;
+    required: boolean;
+    isFinally: boolean;
+    loop?: HarnessLoop;
+    /** Locks of the enclosing nodes, outermost first. */
+    gates: string[];
+  };
+  const lockedBy = (node: Node, ctx: Ctx): string[] => (node.lock ? [...ctx.gates, node.name] : ctx.gates);
 
   const push = (node: Node, kind: HarnessStepKind, ctx: Ctx, stepRank: number) => {
-    const gate = node.lock ? node.name : pendingGate.v;
-    pendingGate.v = undefined;
     steps.push({
       key: keyFor(node.name),
       name: node.name,
@@ -148,7 +155,7 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       ...(node.description ? { description: node.description } : {}),
       ...(kind === 'task' && node.agent ? { agentPath: node.agent } : {}),
       ...(node.skill ? { skill: node.skill } : {}),
-      ...(gate ? { gate } : {}),
+      gates: lockedBy(node, ctx),
       rank: stepRank,
       ...(ctx.group ? { group: ctx.group } : {}),
       ...(ctx.section ? { section: ctx.section } : {}),
@@ -167,10 +174,10 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       return;
     }
     if (repeatableLoop(node) && !ctx.loop) {
-      if (node.lock) pendingGate.v = node.name;
       const l = node.loop!;
       visit(l.body, {
         ...ctx,
+        gates: lockedBy(node, ctx),
         section: ctx.section ? `${ctx.section} › ${node.name}` : node.name,
         required: ctx.required && node.continueOnError !== true,
         isFinally: ctx.isFinally || node.finally === true,
@@ -186,13 +193,13 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       return;
     }
     if (Array.isArray(node.phases)) {
-      if (node.lock) pendingGate.v = node.name;
       const section = ctx.section ? `${ctx.section} › ${node.name}` : node.name;
       const inner: Ctx = {
         section,
         required: ctx.required && node.continueOnError !== true,
         isFinally: ctx.isFinally || node.finally === true,
         ...(ctx.loop ? { loop: ctx.loop } : {}),
+        gates: lockedBy(node, ctx),
       };
       const regular = node.phases.filter(p => p.finally !== true);
       const finals = node.phases.filter(p => p.finally === true);
@@ -206,10 +213,10 @@ export function compileRoadmap(root: Node): HarnessStep[] {
       // itself a sequence keeps the whole parallel as one engine step, so
       // "any order among themselves" never splits a branch's own order.
       if (members.length > 0 && members.every(m => leafKind(m) !== null)) {
-        if (node.lock) pendingGate.v = node.name;
         const groupRank = rank++;
         const inner: Ctx = {
           ...ctx,
+          gates: lockedBy(node, ctx),
           group: node.name,
           required: ctx.required && node.continueOnError !== true,
           isFinally: ctx.isFinally || node.finally === true,
@@ -233,10 +240,10 @@ export function compileRoadmap(root: Node): HarnessStep[] {
   if (Array.isArray(root.phases)) {
     const regular = root.phases.filter(p => p.finally !== true);
     const finals = root.phases.filter(p => p.finally === true);
-    for (const p of regular) visit(p, { required: true, isFinally: false });
-    for (const p of finals) visit(p, { required: true, isFinally: true });
+    for (const p of regular) visit(p, { required: true, isFinally: false, gates: [] });
+    for (const p of finals) visit(p, { required: true, isFinally: true, gates: [] });
   } else {
-    visit(root, { required: true, isFinally: false });
+    visit(root, { required: true, isFinally: false, gates: [] });
   }
   return steps;
 }
@@ -489,7 +496,7 @@ export class HarnessProgress {
           `${mark[st]} ${i + 1}. ${s.name}`,
           s.key !== s.name ? `(id "${s.key}")` : '',
           `— ${kindLabel(s)}`,
-          s.gate ? (approved?.has(s.gate) ? '· approved' : '· needs approval first') : '',
+          s.gates.length === 0 ? '' : s.gates.every(g => approved?.has(g)) ? '· approved' : '· needs approval first',
           s.group ? `· with the other "${s.group}" steps, in any order` : '',
           s.loop ? `· in "${s.loop.name}", pass ${this.passOf(s.loop.name)} of at most ${s.loop.max}` : '',
           s.finally ? '· finalizer' : '',
@@ -694,9 +701,16 @@ export class HarnessEventQueue<T> {
     this.wake?.();
   }
 
+  /** Items leave the queue only once the reader asks for the NEXT one: a
+   *  reader that is abandoned holding an item it never passed on (a merge
+   *  that read ahead when its leg was cut short) leaves it for the next
+   *  drain instead of losing it. */
   async *drain(): AsyncIterable<T> {
     while (true) {
-      while (this.items.length > 0) yield this.items.shift()!;
+      while (this.items.length > 0) {
+        yield this.items[0];
+        this.items.shift();
+      }
       if (this.closed) return;
       await new Promise<void>(resolve => {
         this.wake = () => {

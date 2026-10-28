@@ -143,7 +143,7 @@ export function HarnessPanel({
           <View style={styles.stepBody}>
             <Text style={styles.stepName}>
               {s.name}
-              {s.gate ? ' 🔒' : ''}
+              {s.gates && s.gates.length > 0 ? ' 🔒' : ''}
               {!s.required ? <Text style={styles.muted}> · optional</Text> : null}
               {s.finally ? <Text style={styles.muted}> · finalizer</Text> : null}
             </Text>

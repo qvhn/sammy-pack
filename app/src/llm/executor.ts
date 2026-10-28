@@ -583,7 +583,8 @@ export type RunEvent =
         rank: number;
         skill?: string;
         engineKind?: string;
-        gate?: string;
+        /** Locks guarding the step, outermost first. */
+        gates?: string[];
         group?: string;
         section?: string;
         /** The loop the harness repeats this step in, its pass limit, and
@@ -5826,15 +5827,44 @@ async function* runHarness(
   // ── Step tools ──
   let queue = new HarnessEventQueue<RunEvent>();
   // Set by the step tools while the agent's stream runs; read after it ends.
-  const halt: { gate: HarnessStep | null; stop: Error | null } = { gate: null, stop: null };
+  const halt: { gate: HarnessStep | null; gateName: string | null; stop: Error | null } = {
+    gate: null,
+    gateName: null,
+    stop: null,
+  };
   const approvedGates = new Set<string>();
   // A gate already crossed in an earlier leg (its step, or a later pass of
   // its loop, has a record) doesn't stop the run again.
   for (const s of steps) {
-    if (s.gate && (restored.has(s.key) || (s.loop && progress.passOf(s.loop.name) > 1))) approvedGates.add(s.gate);
+    if (restored.has(s.key) || (s.loop && progress.passOf(s.loop.name) > 1)) for (const g of s.gates) approvedGates.add(g);
   }
   const startedAt = new Map<string, number>();
   const slot: { release: (() => void) | null } = { release: null };
+  /** Let go of the active step without finishing it (its leg ended). */
+  const releaseActive = (): void => {
+    if (progress.active) stepBudget.leave(progress.active);
+    progress.release();
+  };
+  /** Steps re-opened after they finished (loose / advisory order). */
+  const reopened = new Set<string>();
+  /** The active step's own `budget`, in force while it is active — as a
+   *  pipeline holds a node's budget while the node runs. */
+  const stepBudget = {
+    enter(s: HarnessStep): void {
+      if (!s.node.budget) return;
+      ctx.budgets.push({
+        budget: s.node.budget,
+        nodeName: s.name,
+        tokensAtEntry: ctx.usage.totalInputTokens + ctx.usage.totalOutputTokens,
+        costAtEntry: ctx.usage.totalCostUsd,
+      });
+    },
+    leave(s: HarnessStep): void {
+      const i = ctx.budgets.findIndex(b => b.nodeName === s.name && b.budget === s.node.budget);
+      if (i >= 0) ctx.budgets.splice(i, 1);
+    },
+  };
+  const control = opts.control;
   // A terminal taking over ends the server agent's leg — but not in the
   // middle of an engine step, whose run_step is still waiting on it.
   const engine = { running: false, interruptPending: false, interrupted: false };
@@ -5851,11 +5881,53 @@ async function* runHarness(
     });
   };
   const acquireSlot = async () => {
+    slot.release?.();
     slot.release = await agentSlots.acquire({
       runId: ctx.runId,
       orchestrationName: ctx.orchestrationName,
       phaseName: HARNESS_PHASE,
     });
+  };
+  /** A server leg's agent holds a slot while its leg lives; run_step gives
+   *  it back for the engine step and takes it again only if the leg still
+   *  lives — else a cancel or a dead session would leak a slot for good. */
+  const legLive = { v: false };
+
+  // ── Spend: charged as the session reports it (budgets hold mid-leg), and
+  //    attributed to the step it was spent on.
+  const spend = {
+    charged: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 },
+    step: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+  };
+  /** Fold the session's cumulative usage into the run totals; a breach is
+   *  returned for the caller to stop on. */
+  const chargeUsage = (u: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }): RunEvent | null => {
+    const c = spend.charged;
+    const cum = {
+      input: Math.max(c.input, u.inputTokens),
+      output: Math.max(c.output, u.outputTokens),
+      cacheRead: Math.max(c.cacheRead, u.cacheReadTokens ?? 0),
+      cacheWrite: Math.max(c.cacheWrite, u.cacheWriteTokens ?? 0),
+    };
+    const usd = Math.max(
+      c.usd,
+      costUsd(model, cum.input, cum.output, { cacheReadTokens: cum.cacheRead, cacheWriteTokens: cum.cacheWrite }),
+    );
+    const d = { input: cum.input - c.input, output: cum.output - c.output, usd: usd - c.usd };
+    spend.charged = { ...cum, usd };
+    ctx.usage.totalInputTokens += d.input;
+    ctx.usage.totalOutputTokens += d.output;
+    ctx.usage.totalCostUsd += d.usd;
+    spend.step.inputTokens += d.input;
+    spend.step.outputTokens += d.output;
+    spend.step.costUsd += d.usd;
+    return enforceBudgets(ctx);
+  };
+  /** What the session spent since the last step ended — that step's cost. */
+  const takeStepSpend = () => {
+    const out = spend.step;
+    spend.step = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    return out;
   };
 
   /** Gates approved so far, this leg or before (a resume's auto-approve). */
@@ -5879,8 +5951,16 @@ async function* runHarness(
   /** Record a step's end: checkpoint, state, and what the run page shows.
    *  Returns what the engine decided as a result — a repeated loop's pass
    *  ending goes round again or finishes — for the tool's reply. */
-  const finishStep = (s: HarnessStep, rec: StepRecord): string => {
+  const finishStep = (s: HarnessStep, raw: StepRecord): string => {
+    // Scrub BEFORE encoding: a secret with a quote or a newline is escaped
+    // inside the JSON record, where the event scrubber's exact match misses it.
+    const rec: StepRecord = {
+      ...raw,
+      ...(raw.output !== undefined ? { output: scrubSecrets(raw.output, ctx.injectedSecrets) } : {}),
+      ...(raw.reason !== undefined ? { reason: scrubSecrets(raw.reason, ctx.injectedSecrets) } : {}),
+    };
     const replayKey = progress.checkpointKey(s);
+    stepBudget.leave(s);
     progress.finish(s, rec);
     const encoded = encodeStepRecord(rec);
     ctx.replayOutputs.set(replayKey, encoded);
@@ -5890,9 +5970,7 @@ async function* runHarness(
         type: 'phase-end',
         phaseName: s.name,
         output: rec.output ?? '',
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
+        ...takeStepSpend(),
         durationMs: Date.now() - (startedAt.get(s.key) ?? Date.now()),
         model,
         ts: Date.now(),
@@ -5901,7 +5979,7 @@ async function* runHarness(
     } else if (rec.status === 'skipped') {
       queue.push({ type: 'phase-skipped', phaseName: s.name, reason: rec.reason ?? 'skipped', ts: Date.now() });
     } else if (rec.status === 'failed' && rec.by === 'harness') {
-      queue.push({ type: 'phase-error', phaseName: s.name, error: rec.reason ?? 'failed', ts: Date.now() });
+      queue.push({ type: 'phase-error', phaseName: s.name, error: rec.reason ?? 'failed', ...takeStepSpend(), ts: Date.now() });
     }
     queue.push({
       type: 'harness-step',
@@ -5999,7 +6077,7 @@ async function* runHarness(
     } else {
       out.push(`### Task\nWork on this input, as the guidelines describe:\n\n${clipForAgent(input) || '(no input)'}`);
     }
-    const gateMsgKey = [s.key, s.name, s.gate].find(k => k && ctx.gateMessages.has(k));
+    const gateMsgKey = [s.key, s.name, ...s.gates].find(k => k && ctx.gateMessages.has(k));
     if (gateMsgKey) {
       const msg = ctx.gateMessages.get(gateMsgKey)!;
       ctx.gateMessages.delete(gateMsgKey);
@@ -6021,6 +6099,33 @@ async function* runHarness(
       queue.push({ type: 'interpolation-unresolved', phaseName: s.name, refs: [...unresolved], ts: Date.now() });
     }
     return out.join('\n\n');
+  };
+
+  /** Cross each of a step's unapproved gates: record it, auto-approve it
+   *  (unattended mode, or the gate a resume was approved at), or stop the
+   *  leg there. Returns the tool reply when the run must stop. */
+  const gateCheck = (s: HarnessStep, gates: string[]): { text: string } | null => {
+    for (const g of gates) {
+      if (approvedGates.has(g)) continue;
+      queue.push({ type: 'lock-gate', phaseName: g, replayKey: g, ts: Date.now() });
+      let approved = ctx.autoApproveAllLocks;
+      if (!approved && ctx.autoApproveLocks.has(g)) {
+        ctx.autoApproveLocks.delete(g);
+        approved = true;
+      }
+      if (approved) {
+        approvedGates.add(g);
+        continue;
+      }
+      halt.gate = s;
+      halt.gateName = g;
+      return {
+        text:
+          `${stepRef(s)} needs a person's approval${g !== s.name ? ` ("${g}")` : ''} before it starts. STOP NOW: ` +
+          'end your turn with a one-line status. The run pauses here; once it is approved you are resumed at this step.',
+      };
+    }
+    return null;
   };
 
   const findStep = (ref: string | undefined) =>
@@ -6048,6 +6153,12 @@ async function* runHarness(
         if (progress.active?.key === s.key) return { text: briefFor(s) };
         const verdict = progress.canStart(s);
         if (!verdict.ok) return err(verdict.reason);
+        const wasFinished = progress.statusOf(s.key) === 'done' || progress.statusOf(s.key) === 'skipped';
+        // A pipeline enters an enclosing locked section before it looks at a
+        // step's `when`, and checks a step's own lock after it — same here.
+        const ownLock = s.node.lock ? s.name : null;
+        const stopped = gateCheck(s, s.gates.filter(g => g !== ownLock));
+        if (stopped) return stopped;
         if (s.node.when !== undefined) {
           const refs = new Set<string>();
           const run = evalWhen(s.node.when, lookupState(ctx, ctx.lastOutput), r => refs.add(r));
@@ -6063,25 +6174,11 @@ async function* runHarness(
             return { text: `The engine skipped ${stepRef(s)}: ${reason}.${note ? ` ${note}` : ''}\n\n${nextLine()}` };
           }
         }
-        if (s.gate && !approvedGates.has(s.gate)) {
-          queue.push({ type: 'lock-gate', phaseName: s.gate, replayKey: s.gate, ts: Date.now() });
-          let approved = ctx.autoApproveAllLocks;
-          if (!approved && ctx.autoApproveLocks.has(s.gate)) {
-            ctx.autoApproveLocks.delete(s.gate);
-            approved = true;
-          }
-          if (approved) {
-            approvedGates.add(s.gate);
-          } else {
-            halt.gate = s;
-            return {
-              text:
-                `${stepRef(s)} needs a person's approval before it starts. STOP NOW: end your turn with a ` +
-                'one-line status. The run pauses here; once it is approved you are resumed at this step.',
-            };
-          }
-        }
+        const ownStopped = gateCheck(s, ownLock ? [ownLock] : []);
+        if (ownStopped) return ownStopped;
         progress.start(s);
+        if (s.kind !== 'engine') stepBudget.enter(s);
+        if (wasFinished) reopened.add(s.key);
         startedAt.set(s.key, Date.now());
         queue.push({ type: 'phase-start', phaseName: s.name, ts: Date.now() });
         queue.push({ type: 'harness-step', key: s.key, phaseName: s.name, status: 'started', by: 'harness', ts: Date.now() });
@@ -6162,6 +6259,17 @@ async function* runHarness(
         if (s.kind !== 'engine') return err(`${stepRef(s)} is yours to do (${kindLabel(s)}); complete_step it when done.`);
         // start_step already decided the gate and the condition.
         const node: Node = { ...s.node, lock: false, when: undefined };
+        // Each pass of a repeated loop — and a loose-order redo — runs the
+        // step afresh: its leaves checkpoint under their own scope, so they
+        // don't replay what the previous pass recorded.
+        const scope = s.loop
+          ? `${s.loop.name}@${progress.passOf(s.loop.name)}`
+          : reopened.has(s.key)
+            ? `${s.key}~redo${Date.now()}`
+            : '';
+        const stepCtx: ExecutorContext = scope
+          ? { ...ctx, replayScope: ctx.replayScope ? `${ctx.replayScope}/${scope}` : scope }
+          : ctx;
         // Don't hold an agent slot while the engine step may need one. (A
         // terminal-driven leg holds none.)
         const heldSlot = slot.release !== null;
@@ -6169,11 +6277,15 @@ async function* runHarness(
         slot.release = null;
         engine.running = true;
         try {
-          for await (const ev of executeNode(node, ctx, ctx.lastOutput)) queue.push(ev);
+          for await (const ev of executeNode(node, stepCtx, ctx.lastOutput)) queue.push(ev);
+          if (stepCtx !== ctx) {
+            ctx.lastOutput = stepCtx.lastOutput;
+            ctx.lastOutputValue = stepCtx.lastOutputValue;
+          }
         } catch (e) {
           if (e instanceof RunPauseRequested || e instanceof RunCancelled || e instanceof BudgetExceededError) {
             halt.stop = e;
-            progress.release();
+            releaseActive();
             return { text: 'The run is stopping here. End your turn now with a one-line status.' };
           }
           const reason = (e as Error).message;
@@ -6186,15 +6298,26 @@ async function* runHarness(
           );
         } finally {
           engine.running = false;
-          if (heldSlot) await acquireSlot();
+          if (heldSlot && legLive.v && !ctx.cancelled.v) {
+            await acquireSlot();
+            // The leg ended while we waited for the slot: give it straight back.
+            if (!(legLive.v as boolean) || ctx.cancelled.v) {
+              (slot.release as (() => void) | null)?.();
+              slot.release = null;
+            }
+          }
           if (engine.interruptPending) {
             engine.interruptPending = false;
-            requestInterrupt();
+            // Only if the takeover is still wanted (it may have timed out).
+            if (control?.wantTerminal) requestInterrupt();
           }
         }
+        reopened.delete(s.key);
         const output = ctx.lastOutput;
         const note = finishStep(s, { status: 'done', output, by: 'engine' });
-        return { text: `${stepRef(s)} finished. Its output:\n\n${clipForAgent(output)}${note ? `\n\n${note}` : ''}\n\n${nextLine()}` };
+        return {
+          text: `${stepRef(s)} finished. Its output:\n\n${clipForAgent(scrubSecrets(output, ctx.injectedSecrets))}${note ? `\n\n${note}` : ''}\n\n${nextLine()}`,
+        };
       },
     },
   ];
@@ -6210,7 +6333,8 @@ async function* runHarness(
     if (toolName === 'Skill') {
       if (s.kind !== 'skill') return `${stepRef(s)} doesn't run a skill.`;
       const wanted = (input as { skill?: unknown } | null)?.skill;
-      if (typeof wanted === 'string' && wanted !== s.skill && !wanted.endsWith(`:${s.skill}`) && !s.skill!.endsWith(`:${wanted}`)) {
+      const named = s.skill!;
+      if (typeof wanted === 'string' && wanted !== named && !(named.includes(':') && named.endsWith(`:${wanted}`))) {
         return `${stepRef(s)} runs the skill "${s.skill}", not "${wanted}".`;
       }
       return null;
@@ -6221,8 +6345,26 @@ async function* runHarness(
       return servers.includes(server) ? null : `${stepRef(s)} doesn't use the MCP server "${server}".`;
     }
     const allowed = toolsFor(s);
+    // A declared `Tool(pattern)` (Claude Code's permission syntax) allows the
+    // tool for matching calls; for Bash the pattern is the command (`x:*` /
+    // `x*` = starts with x, else exactly x). Other tools' patterns aren't
+    // checked here — the tool itself is allowed.
+    const patterns = allowed
+      .map(t => /^([A-Za-z]+)\((.*)\)$/.exec(t))
+      .filter((m): m is RegExpExecArray => !!m && m[1] === toolName)
+      .map(m => m[2]);
     if (!allowed.includes(toolName)) {
-      return `${stepRef(s)} doesn't allow ${toolName}. It allows: ${allowed.length > 0 ? allowed.join(', ') : 'reading only'}.`;
+      if (patterns.length === 0) {
+        return `${stepRef(s)} doesn't allow ${toolName}. It allows: ${allowed.length > 0 ? allowed.join(', ') : 'reading only'}.`;
+      }
+      if (toolName === 'Bash') {
+        const cmd = String((input as { command?: unknown } | null)?.command ?? '').trim();
+        const ok = patterns.some(p => {
+          const prefix = p.endsWith(':*') ? p.slice(0, -2) : p.endsWith('*') ? p.slice(0, -1) : null;
+          return prefix !== null ? cmd.startsWith(prefix.trim()) : cmd === p.trim();
+        });
+        if (!ok) return `${stepRef(s)} only allows Bash for: ${patterns.join(', ')}.`;
+      }
     }
     if (toolName === 'Bash') {
       const cmd = (input as { command?: unknown } | null)?.command;
@@ -6236,7 +6378,6 @@ async function* runHarness(
   };
 
   // ── Legs ──
-  const control = opts.control;
   const input = String(ctx.state.input ?? '');
   const firstMessage = (): string => {
     if (!resumeSession) {
@@ -6245,7 +6386,7 @@ async function* runHarness(
             `finished are checked in the list.\n\nThe last finished step's output:\n${clipForAgent(ctx.lastOutput, 8_000) || '(none)'}\n\n${nextLine()}`
         : `Begin the run.\n\nThe run's input:\n${clipForAgent(input) || '(none)'}\n\n${nextLine()}`;
     }
-    const approved = steps.find(s => s.gate && ctx.autoApproveLocks.has(s.gate));
+    const approved = steps.find(s => s.gates.some(g => ctx.autoApproveLocks.has(g)));
     if (approved) {
       return `${stepRef(approved)} was approved. Continue the run: start_step("${approved.key}").`;
     }
@@ -6264,7 +6405,7 @@ async function* runHarness(
   /** A gate a leg stopped at: pause for approval (the server pauses the
    *  run here), then tell the agent it was approved. */
   const awaitGate = async (gateStep: HarnessStep): Promise<void> => {
-    const gate = gateStep.gate!;
+    const gate = (halt.gateName as string | null) ?? gateStep.gates[gateStep.gates.length - 1];
     const approved = await ctx.waitForApproval(gate, gate);
     if (!approved) {
       ctx.cancelled.v = true;
@@ -6299,7 +6440,7 @@ async function* runHarness(
         rank: s.rank,
         ...(s.skill ? { skill: s.skill } : {}),
         ...(s.engineKind ? { engineKind: s.engineKind } : {}),
-        ...(s.gate ? { gate: s.gate } : {}),
+        ...(s.gates.length > 0 ? { gates: s.gates } : {}),
         ...(s.group ? { group: s.group } : {}),
         ...(s.section ? { section: s.section } : {}),
         ...(s.loop ? { loop: s.loop.name, loopMax: s.loop.max, pass: progress.passOf(s.loop.name) } : {}),
@@ -6317,16 +6458,25 @@ async function* runHarness(
     queue = new HarnessEventQueue<RunEvent>();
     const legQueue = queue;
     halt.gate = null;
+    halt.gateName = null;
     halt.stop = null;
 
     // ── A terminal drives this leg: serve the step tools to it and follow
     //    along until it finishes, stops at a gate, hands back, or goes idle.
     if (byTerminal && control) {
       const end: { why: 'handback' | 'idle' | 'auto' | 'cancel' | null } = { why: null };
+      // A tool call in flight (a long run_step) holds the leg open: idle
+      // isn't counted during it, and a hand-back or a finish waits for it —
+      // else its result would land after the leg closed and never checkpoint.
+      const calls = { inFlight: 0, deferred: null as 'handback' | 'idle' | 'auto' | null };
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       const idleSec = envSeconds('SAMMY_HARNESS_TERMINAL_IDLE_SEC', HARNESS_TERMINAL_IDLE_SEC);
       const finish = (why: 'handback' | 'idle' | 'auto' | 'cancel'): void => {
         if (end.why) return;
+        if (why !== 'cancel' && calls.inFlight > 0) {
+          calls.deferred ??= why;
+          return;
+        }
         end.why = why;
         if (idleTimer) clearTimeout(idleTimer);
         legQueue.close();
@@ -6340,10 +6490,24 @@ async function* runHarness(
         tools.map(t => ({
           ...t,
           handler: async (args: Record<string, string | undefined>) => {
-            bumpIdle();
-            const res = await t.handler(args);
-            if (halt.gate || halt.stop || (!progress.active && progress.unfinished().length === 0)) finish('auto');
-            return res;
+            if (end.why) return { text: 'The terminal no longer drives this run.', isError: true };
+            calls.inFlight += 1;
+            if (idleTimer) clearTimeout(idleTimer);
+            try {
+              const res = await t.handler(args);
+              if (halt.gate || halt.stop || (!progress.active && progress.unfinished().length === 0)) {
+                calls.deferred ??= 'auto';
+              }
+              return res;
+            } finally {
+              calls.inFlight -= 1;
+              if (calls.inFlight === 0) {
+                const why = calls.deferred;
+                calls.deferred = null;
+                if (why) finish(why);
+                else bumpIdle();
+              }
+            }
           },
         })),
       );
@@ -6372,7 +6536,7 @@ async function* runHarness(
       control.wantTerminal = false;
       if (end.why === 'cancel' || ctx.cancelled.v) throw new RunCancelled();
       if (end.why === 'handback') {
-        progress.release();
+        releaseActive();
         yield { type: 'harness-notice', message: 'The terminal handed the run back to the server\'s agent.', ts: Date.now() };
         message =
           `The person driving the run from a terminal has handed it back to you. Where it stands:\n` +
@@ -6380,7 +6544,7 @@ async function* runHarness(
         continue;
       }
       if (end.why === 'idle') {
-        progress.release();
+        releaseActive();
         yield {
           type: 'harness-notice',
           message: `No step tool was called from the terminal for ${Math.round(idleSec / 60)} minutes — pausing the run. Resume it, or take it over again.`,
@@ -6390,7 +6554,7 @@ async function* runHarness(
       }
       const stopped = halt.stop as Error | null;
       if (stopped) {
-        progress.release();
+        releaseActive();
         throw stopped;
       }
       const gated = halt.gate as HarnessStep | null;
@@ -6404,7 +6568,6 @@ async function* runHarness(
 
     // ── The server's agent drives this leg.
     let legText = '';
-    let usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     let sawChunk = false;
     let hitMaxTurns = false;
     let interruptedLeg = false;
@@ -6424,6 +6587,8 @@ async function* runHarness(
       throw new RunCancelled();
     }
     engine.interrupted = false;
+    legLive.v = true;
+    spend.charged = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 };
     if (control) {
       control.interruptLeg = requestInterrupt;
       // A takeover asked for between legs: hand over at the first event.
@@ -6501,13 +6666,13 @@ async function* runHarness(
             textBytes: ev.textBytes,
             ts: Date.now(),
           };
-        } else if (ev.type === 'done') {
-          usage = {
-            inputTokens: ev.usage.inputTokens,
-            outputTokens: ev.usage.outputTokens,
-            cacheReadTokens: ev.usage.cacheReadTokens ?? 0,
-            cacheWriteTokens: ev.usage.cacheWriteTokens ?? 0,
-          };
+        } else if (ev.type === 'usage' || ev.type === 'done') {
+          const breach = chargeUsage(ev.usage);
+          if (breach) {
+            yield breach;
+            const b = breach as Extract<RunEvent, { type: 'budget-exceeded' }>;
+            throw new BudgetExceededError(b.kind, b.limit, b.actual);
+          }
         }
         if (engine.interrupted) throw new HarnessLegInterrupted();
       }
@@ -6516,15 +6681,9 @@ async function* runHarness(
     try {
       for await (const ev of withStallGuard(legEvents(), HARNESS_PHASE, stallSeconds)) yield ev;
     } catch (e) {
+      // A session that died mid-turn still spent what it reports.
       const dead = usageOf(e);
-      if (dead) {
-        usage = {
-          inputTokens: dead.inputTokens,
-          outputTokens: dead.outputTokens,
-          cacheReadTokens: dead.cacheReadTokens ?? 0,
-          cacheWriteTokens: dead.cacheWriteTokens ?? 0,
-        };
-      }
+      if (dead) chargeUsage(dead);
       if (e instanceof HarnessLegInterrupted) {
         interruptedLeg = true;
       } else if (e instanceof RunCancelled) {
@@ -6535,6 +6694,7 @@ async function* runHarness(
         legError = e as Error;
       }
     } finally {
+      legLive.v = false;
       if (control) control.interruptLeg = null;
       slot.release?.();
       slot.release = null;
@@ -6543,50 +6703,39 @@ async function* runHarness(
     // Whatever the step tools queued after the agent's stream ended.
     for await (const ev of legQueue.drain()) yield ev;
 
-    // Charge the leg — on every exit, as runAgentPhase does.
-    const legCost = costUsd(model, usage.inputTokens, usage.outputTokens, {
-      cacheReadTokens: usage.cacheReadTokens,
-      cacheWriteTokens: usage.cacheWriteTokens,
-    });
-    ctx.usage.totalInputTokens += usage.inputTokens;
-    ctx.usage.totalOutputTokens += usage.outputTokens;
-    ctx.usage.totalCostUsd += legCost;
-    if (usage.inputTokens + usage.outputTokens > 0 || legText) {
+    // What the session spent since the last step ended is the harness's own
+    // (between-step) spend: on the leg's phase-end, so every dollar lands on
+    // exactly one event.
+    const rest = takeStepSpend();
+    if (rest.inputTokens + rest.outputTokens > 0 || rest.costUsd > 0 || legText) {
       yield {
         type: 'phase-end',
         phaseName: HARNESS_PHASE,
         output: scrubSecrets(legText, ctx.injectedSecrets),
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        costUsd: legCost,
+        ...rest,
         durationMs: 0,
         model,
         ts: Date.now(),
       };
-      yield {
-        type: 'cost',
-        costUsd: ctx.usage.totalCostUsd,
-        inputTokens: ctx.usage.totalInputTokens,
-        outputTokens: ctx.usage.totalOutputTokens,
-        ts: Date.now(),
-      };
     }
-    const breach = enforceBudgets(ctx);
-    if (breach) {
-      yield breach;
-      const b = breach as Extract<RunEvent, { type: 'budget-exceeded' }>;
-      throw new BudgetExceededError(b.kind, b.limit, b.actual);
-    }
+    yield {
+      type: 'cost',
+      costUsd: ctx.usage.totalCostUsd,
+      inputTokens: ctx.usage.totalInputTokens,
+      outputTokens: ctx.usage.totalOutputTokens,
+      ts: Date.now(),
+    };
+    if (legError instanceof BudgetExceededError) throw legError;
 
     if (legError instanceof RunCancelled) throw legError;
     const stop = halt.stop as Error | null;
     if (stop) {
-      progress.release();
+      releaseActive();
       throw stop;
     }
     if (interruptedLeg) {
       // The next leg is the terminal's (control.wantTerminal is set).
-      progress.release();
+      releaseActive();
       resumeSession = true;
       message = `The run is back with you. Where it stands:\n${checklist()}\n\n${nextLine()}`;
       continue;
@@ -6607,7 +6756,7 @@ async function* runHarness(
         message = firstMessage();
         continue;
       }
-      progress.release();
+      releaseActive();
       throw legError;
     }
     resumeSession = true;
@@ -6633,7 +6782,7 @@ async function* runHarness(
     nudges += 1;
     const open = unfinished.map(s => `"${s.name}"`).join(', ');
     if (nudges > HARNESS_MAX_NUDGES) {
-      progress.release();
+      releaseActive();
       throw new Error(`The harness agent stopped with steps not done: ${open}.`);
     }
     yield {

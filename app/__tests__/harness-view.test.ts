@@ -9,7 +9,7 @@ const start = (leg: number, extra: Partial<Extract<RunEvent, { type: 'harness-st
   followSource: 'run',
   steps: [
     { key: 'plan', name: 'plan', kind: 'task', rank: 0, required: true, finally: false },
-    { key: 'ship', name: 'ship', kind: 'engine', engineKind: 'code', rank: 1, gate: 'ship', required: true, finally: false },
+    { key: 'ship', name: 'ship', kind: 'engine', engineKind: 'code', rank: 1, gates: ['ship'], required: true, finally: false },
     { key: 'note', name: 'note', kind: 'skill', skill: 'notes', rank: 2, required: false, finally: false },
   ],
   sessionId: 'sess-1',

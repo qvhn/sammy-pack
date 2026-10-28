@@ -482,15 +482,15 @@ export function buildOpenApiDoc(): object {
           tags: ['runs'],
           summary: 'Whether a terminal is driving this harness run',
           description:
-            'When one is, `command` opens it: `claude --resume <session>` in the ' +
-            'run’s working directory, with the run’s step tools served on ' +
-            '127.0.0.1 for that terminal leg only (behind a one-time token).',
+            'Only whether — the command that opens the terminal holds the leg’s ' +
+            'token, so it is returned by the POST (`peek: true` reads it without ' +
+            'taking over), to callers allowed to write.',
           parameters: [runIdParam],
           responses: {
             '200': jsonResponse('Terminal state.', {
               type: 'object',
-              properties: { live: { type: 'boolean' }, command: { type: ['string', 'null'] } },
-              required: ['live', 'command'],
+              properties: { live: { type: 'boolean' } },
+              required: ['live'],
             }),
             '404': errorResponse('Run not found.'),
             '409': errorResponse('Not a harness run.'),
@@ -510,7 +510,13 @@ export function buildOpenApiDoc(): object {
             'SAMMY_HARNESS_TERMINAL_IDLE_SEC (default 30 min — the run then pauses).',
           security: mutatingSecurity,
           parameters: [runIdParam],
-          requestBody: jsonBody({ type: 'object', properties: { open: { type: 'boolean' } } }),
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              open: { type: 'boolean' },
+              peek: { type: 'boolean', description: 'Only read the live leg’s command; never take over.' },
+            },
+          }),
           responses: {
             '200': jsonResponse('The terminal leg is live.', {
               type: 'object',

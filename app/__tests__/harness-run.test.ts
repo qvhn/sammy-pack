@@ -17,7 +17,10 @@ import type { Node } from '../src/types';
 
 type Tools = Record<string, (args: Record<string, string>) => Promise<{ text: string; isError?: boolean }>>;
 type Params = Parameters<StreamFn>[0];
-type Leg = (tools: Tools, params: Params) => AsyncGenerator<{ type: 'text-delta'; text: string }, void, unknown>;
+type Chunk =
+  | { type: 'text-delta'; text: string }
+  | { type: 'usage'; usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } };
+type Leg = (tools: Tools, params: Params) => AsyncGenerator<Chunk, void, unknown>;
 
 /** A stream adapter whose agent is a list of scripted legs. */
 function scriptedAgent(legs: Leg[]) {
@@ -537,6 +540,184 @@ describe('harness run', () => {
       expect(checklist).toContain('[x] 1. implement');
       expect(checklist).toContain('pass 2 of at most 3');
       expect(of(leg2.events, 'run-end')).toHaveLength(1);
+    });
+  });
+
+  describe('review fixes', () => {
+    it('a section\'s lock guards every step in it — loose order can\'t reach the second one unapproved', async () => {
+      const o: Node = {
+        name: 'o',
+        execution: 'harness',
+        harness: { follow: 'loose' },
+        phases: [{ name: 'deploy', lock: true, phases: [
+          { name: 'a', agent: 'agents/builder.md' },
+          { name: 'b', agent: 'agents/builder.md' },
+        ] }],
+      };
+      const asked: string[] = [];
+      let text = '';
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          text = (await t.start_step({ step: 'b' })).text;
+        },
+        async function* (t) {
+          for (const k of ['b', 'a']) {
+            await t.start_step({ step: k });
+            await t.complete_step({ step: k, output: k });
+          }
+        },
+      ]);
+      const { thrown } = await run(o, streamFn, { waitForApproval: async n => (asked.push(n), true) });
+      expect(thrown).toBeNull();
+      expect(text).toMatch(/needs a person's approval \("deploy"\)/);
+      expect(asked).toEqual(['deploy']);
+    });
+
+    it('in a locked parallel group, whichever step goes first is gated; a false `when` doesn\'t skip the section gate', async () => {
+      const o: Node = {
+        name: 'o',
+        execution: 'harness',
+        phases: [
+          { name: 'checks', lock: true, parallel: [
+            { name: 'p1', agent: 'agents/builder.md', when: '${never}' },
+            { name: 'p2', agent: 'agents/builder.md' },
+          ] },
+        ],
+        vars: { never: '' },
+      };
+      const texts: string[] = [];
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          texts.push((await t.start_step({ step: 'p1' })).text);
+        },
+      ]);
+      const { thrown } = await run(o, streamFn, { waitForApproval: async n => { throw new RunPauseRequested(n); } });
+      expect(thrown).toBeInstanceOf(RunPauseRequested);
+      // The gate came first: p1's false `when` didn't get to skip it.
+      expect(texts[0]).toMatch(/needs a person's approval \("checks"\)/);
+    });
+
+    it('an engine step in a repeated loop runs afresh each pass', async () => {
+      const o: Node = {
+        name: 'o',
+        execution: 'harness',
+        phases: [{ name: 'fix', loop: { maxIterations: 2, until: 'NEVER', body: { name: 'pass', phases: [
+          { name: 'checks', code: { source: "return 'saw ' + input.length + ' chars'" } },
+        ] } } }],
+      };
+      const outs: string[] = [];
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          for (let i = 0; i < 2; i++) {
+            await t.start_step({ step: 'checks' });
+            outs.push((await t.run_step({ step: 'checks' })).text);
+          }
+        },
+      ]);
+      const { thrown } = await run(o, streamFn);
+      expect(thrown).toBeNull();
+      const saw = outs.map(t => /saw (\d+) chars/.exec(t)?.[1]);
+      // Pass 2's input is framed as a refinement — longer — so a re-run differs.
+      expect(saw[0]).not.toEqual(saw[1]);
+    });
+
+    it('a step\'s budget holds mid-leg, and its spend lands on its own phase-end', async () => {
+      const o: Node = {
+        name: 'o',
+        execution: 'harness',
+        phases: [
+          { name: 'cheap', agent: 'agents/builder.md' },
+          { name: 'capped', agent: 'agents/builder.md', budget: { maxCostUsd: 0.01 } },
+        ],
+      };
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          await t.start_step({ step: 'cheap' });
+          yield { type: 'usage', usage: { inputTokens: 1000, outputTokens: 100 } };
+          await t.complete_step({ step: 'cheap', output: 'ok' });
+          await t.start_step({ step: 'capped' });
+          // A runaway: far past the step's $0.01 cap before the leg ends.
+          yield { type: 'usage', usage: { inputTokens: 2_000_000, outputTokens: 100 } };
+          yield { type: 'text-delta', text: 'never reached' };
+        },
+      ]);
+      const { events } = await run(o, streamFn);
+      expect(of(events, 'budget-exceeded')[0]).toMatchObject({ phaseName: 'capped', kind: 'costUsd' });
+      expect(of(events, 'run-error')).toHaveLength(1);
+      const cheap = of(events, 'phase-end').find(e => e.phaseName === 'cheap')!;
+      expect(cheap.inputTokens).toBe(1000);
+      expect(cheap.costUsd).toBeGreaterThan(0);
+      expect(of(events, 'phase-delta').map(e => e.text)).not.toContain('never reached');
+    });
+
+    it('a secret with quotes or newlines is scrubbed from the checkpoint record', async () => {
+      const secret = 'pem-"line1"\nline2-ZZZZ';
+      const o: Node = {
+        name: 'o',
+        execution: 'harness',
+        phases: [{ name: 'leak', code: { source: 'return ' + JSON.stringify('key: ' + secret) } }],
+      };
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          await t.start_step({ step: 'leak' });
+          const r = await t.run_step({ step: 'leak' });
+          expect(r.text).not.toContain(secret);
+        },
+      ]);
+      const { events } = await run(o, streamFn, { injectedSecrets: new Set([secret]) });
+      const rec = of(events, 'harness-step').find(e => e.key === 'leak' && e.status === 'done')!.record!;
+      expect(rec).not.toContain(JSON.stringify(secret).slice(1, -1));
+      expect(JSON.parse(rec).output).not.toContain(secret);
+    });
+
+    it('a Bash(pattern) step allows only matching commands', async () => {
+      const o: Node = {
+        name: 'o',
+        execution: 'harness',
+        phases: [{ name: 'test', agent: 'agents/builder.md', tools: ['Bash(npm test:*)'] }],
+      };
+      const verdicts: Array<string | null> = [];
+      const { streamFn } = scriptedAgent([
+        async function* (t, p) {
+          await t.start_step({ step: 'test' });
+          verdicts.push(p.harness!.toolGate!('Bash', { command: 'npm test -- --ci' }));
+          verdicts.push(p.harness!.toolGate!('Bash', { command: 'rm -rf /' }));
+          await t.complete_step({ step: 'test', output: 'ok' });
+        },
+      ]);
+      await run(o, streamFn);
+      expect(verdicts[0]).toBeNull();
+      expect(verdicts[1]).toMatch(/only allows Bash for: npm test:\*/);
+    });
+
+    it('a terminal leg doesn\'t go idle, or end, while a step tool is still running', async () => {
+      const prev = process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC;
+      process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC = '0.2';
+      try {
+        const served: { tools: Tools | null } = { tools: null };
+        const control: HarnessControl = newHarnessControl(async tools => {
+          served.tools = Object.fromEntries(tools.map(t => [t.name, (a: Record<string, string>) => t.handler(a)]));
+          return { url: 'http://127.0.0.1:1/mcp', token: 'tok', close: () => {} };
+        });
+        control.wantTerminal = true;
+        const o: Node = {
+          name: 'o',
+          execution: 'harness',
+          phases: [{ name: 'slow', wait: { seconds: 0.6 } }, { name: 'next', agent: 'agents/builder.md' }],
+        };
+        const running = run(o, scriptedAgent([]).streamFn, { harnessControl: control });
+        for (let i = 0; i < 200 && !control.terminal; i++) await new Promise(r => setTimeout(r, 5));
+        await served.tools!.start_step({ step: 'slow' });
+        const r = await served.tools!.run_step({ step: 'slow' });
+        expect(r.text).toMatch(/"slow" finished/);
+        const { events, thrown } = await running;
+        // The idle pause came after the step was recorded, not in the middle of it.
+        expect(thrown).toBeInstanceOf(RunPauseRequested);
+        expect(of(events, 'harness-step').some(e => e.key === 'slow' && e.status === 'done')).toBe(true);
+      } finally {
+        if (prev === undefined) delete process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC;
+        else process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC = prev;
+      }
     });
   });
 });

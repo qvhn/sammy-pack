@@ -32,7 +32,7 @@ Choose it per run (the Run dialog's **How to run**, or `execution` on
 | an agent step | the harness does it, with the agent file as its guidelines and `prompt` as its task |
 | a step with `skill` | the harness runs that skill (a step may name only a skill — it then runs in harness mode only) |
 | `code` / `http` / `wait` / `a2a` | the engine runs it exactly as written when the harness asks (`run_step`) |
-| `lock: true` | the run stops for approval before the step, like a pipeline |
+| `lock: true` | the run stops for approval before the step, like a pipeline; a locked section, `parallel` or loop guards every step in it |
 | a `when` that is false | the engine skips the step |
 | a `phases` section | its steps, in order |
 | a `parallel` of single steps | those steps, in any order among themselves |
@@ -98,10 +98,13 @@ tool limits are the server agent's.
 ## Trade-offs
 
 - **One context.** Later steps know what earlier ones found without passing
-  outputs around — but that context grows across the run. On a small
-  `ticket-to-pr` change a harness run cost about 30% more than the pipeline
-  (cache reads of a growing conversation) in about the same time. Long sweeps
-  belong in an engine step (a `map`, a script).
+  outputs around — but that context grows across the run. On small
+  `ticket-to-pr` changes a harness run cost about the same as the pipeline up
+  to 30% more (cache reads of a growing conversation), in about the same
+  time. Long sweeps belong in an engine step (a `map`, a script).
+- **Spend is charged as it happens**: each step's `phase-end` carries what the
+  agent spent on it (output tokens settle at the end of a session leg, so the
+  leg's own row carries the rest), and a step's `budget` holds mid-step.
 - **One session, one process.** Every credential a step declares is in the
   session's environment for the whole run (the run says so when it starts),
   and the steps' MCP servers and hooks are attached to the whole session.

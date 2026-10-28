@@ -12,7 +12,7 @@ export type HarnessStepView = {
   kind: HarnessStepKind;
   skill?: string;
   engineKind?: string;
-  gate?: string;
+  gates?: string[];
   group?: string;
   section?: string;
   /** The loop the harness repeats this step in, and the pass it is on. */

@@ -8566,12 +8566,14 @@ export async function mountSammyApi(
             control.endTerminalLeg('handback');
             return sendJson(res, 200, { ok: true });
           }
+          // GET says only WHETHER a terminal drives the run: the command holds
+          // the leg's token, which can drive the run — so it goes only to a
+          // caller allowed to write (a POST), never to a read-only one.
           if (method === 'GET') {
-            const command = liveCommand();
-            return sendJson(res, 200, { live: command !== null, command });
+            return sendJson(res, 200, { live: existingHarnessControl(id)?.terminal != null });
           }
           if (method !== 'POST') return sendError(res, 405, 'Method not allowed');
-          let body: { open?: unknown } = {};
+          let body: { open?: unknown; peek?: unknown } = {};
           try {
             const raw = await readBody(req);
             body = raw.trim() ? JSON.parse(raw) : {};
@@ -8579,6 +8581,8 @@ export async function mountSammyApi(
             return sendError(res, 400, 'Invalid JSON');
           }
           const control = harnessControlFor(id);
+          // `peek`: the live leg's command if there is one — never a takeover.
+          if (body.peek === true && !control.terminal) return sendJson(res, 200, { live: false, command: null });
           if (!control.terminal) {
             if (stored.status === 'running') {
               if (!isActiveServerRun(id)) {
