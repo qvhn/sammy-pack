@@ -6572,11 +6572,24 @@ async function* runHarness(
     let hitMaxTurns = false;
     let interruptedLeg = false;
     let legError: Error | null = null;
+    // This leg's step tools and tool gate answer only while the leg is open. A
+    // leg that ends early (a takeover, a stall, a budget stop, a cancel) closes
+    // its session's stream, but the session can still be finishing a turn: a
+    // step tool it calls then is refused, so it can't move the run while the
+    // next driver (a terminal, the next leg) has it.
+    const thisLeg = { open: true };
+    const legOpen = (): boolean => thisLeg.open && !engine.interrupted;
+    const legEnded =
+      "This session's leg has ended: the run is being driven elsewhere or has stopped. End your turn now, without calling more tools.";
     const harnessOpts: HarnessStreamOptions = {
-      tools,
+      tools: tools.map(t => ({
+        ...t,
+        handler: async (args: Record<string, string | undefined>) =>
+          legOpen() ? t.handler(args) : { text: legEnded, isError: true },
+      })),
       ...(resumeSession ? { resume: sessionId } : { sessionId }),
       ...(skills.length > 0 ? { skills } : {}),
-      toolGate,
+      toolGate: (toolName: string, toolInput: unknown) => (legOpen() ? toolGate(toolName, toolInput) : legEnded),
     };
     const system = buildHarnessSystemPrompt({ orchestration, progress, extra, approvedGates: gatesApproved() }) + PHASE_TURN_CONTRACT;
     const prompt = message;
@@ -6694,6 +6707,7 @@ async function* runHarness(
         legError = e as Error;
       }
     } finally {
+      thisLeg.open = false;
       legLive.v = false;
       if (control) control.interruptLeg = null;
       slot.release?.();

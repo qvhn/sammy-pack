@@ -424,6 +424,52 @@ describe('harness run', () => {
       expect(of(events, 'run-end')).toHaveLength(1);
     });
 
+    it('taking over stops the server agent\'s session; a step tool it calls late is refused', async () => {
+      // A real session runs on its own: after the engine stops reading it, it can still finish its turn and call
+      // step tools (an in-process call of the handler). It must not drive the run the terminal now has.
+      const { control, whenServed } = fakeTerminal();
+      let sessionStopped = false;
+      let late: { text: string; isError?: boolean } | null = null;
+      const { streamFn } = scriptedAgent([
+        async function* (t) {
+          try {
+            await t.start_step({ step: 'plan' });
+            await t.complete_step({ step: 'plan', output: 'p' });
+            control.wantTerminal = true;
+            control.interruptLeg!();
+            setTimeout(() => {
+              t.start_step({ step: 'shout' }).then(
+                r => {
+                  late = r;
+                },
+                () => {},
+              );
+            }, 20);
+            yield { type: 'text-delta', text: 'still talking' };
+            await new Promise(r => setTimeout(r, 60));
+            yield { type: 'text-delta', text: 'never seen' };
+          } finally {
+            sessionStopped = true;
+          }
+        },
+      ]);
+      const running = run(tree, streamFn, { harnessControl: control });
+      const t = await whenServed();
+      await new Promise(r => setTimeout(r, 120));
+      expect(late).toMatchObject({ isError: true });
+      expect(late!.text).toMatch(/leg has ended/);
+      expect((await t.list_steps({})).text).toMatch(/\[ \] 2\. shout/);
+      await t.start_step({ step: 'shout' });
+      await t.run_step({ step: 'shout' });
+      await t.start_step({ step: 'build' });
+      await t.complete_step({ step: 'build', output: 'b' });
+      const { events, thrown } = await running;
+      expect(thrown).toBeNull();
+      expect(sessionStopped).toBe(true);
+      expect(of(events, 'harness-start').map(e => e.driver)).toEqual(['server', 'terminal']);
+      expect(of(events, 'run-end')).toHaveLength(1);
+    });
+
     it('a terminal that goes quiet pauses the run instead of holding it', async () => {
       const prev = process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC;
       process.env.SAMMY_HARNESS_TERMINAL_IDLE_SEC = '0.2';
