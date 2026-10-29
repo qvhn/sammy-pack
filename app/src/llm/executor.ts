@@ -6632,6 +6632,15 @@ async function* runHarness(
     let hitMaxTurns = false;
     let interruptedLeg = false;
     let legError: Error | null = null;
+    // This leg's step tools and tool gate answer only while the leg is open. A
+    // leg that ends early (a takeover, a stall, a budget stop, a cancel) closes
+    // its session's stream, but the session can still be finishing a turn: a
+    // step tool it calls then is refused, so it can't move the run while the
+    // next driver (a terminal, the next leg) has it.
+    const thisLeg = { open: true };
+    const legOpen = (): boolean => thisLeg.open && !engine.interrupted;
+    const legEnded =
+      "This session's leg has ended: the run is being driven elsewhere or has stopped. End your turn now, without calling more tools.";
     // Each leg's session starts on the model the moment needs: a terminal
     // handing back mid-step leaves that step's model in force.
     sessionModel.current = progress.active ? stepModel(progress.active) : model;
@@ -6641,6 +6650,7 @@ async function* runHarness(
       tools: tools.map(t => ({
         ...t,
         handler: async (args: Record<string, string | undefined>) => {
+          if (!legOpen()) return { text: legEnded, isError: true };
           const reply = await t.handler(args);
           await syncModel();
           return reply;
@@ -6648,7 +6658,7 @@ async function* runHarness(
       })),
       ...(resumeSession ? { resume: sessionId } : { sessionId }),
       ...(skills.length > 0 ? { skills } : {}),
-      toolGate,
+      toolGate: (toolName: string, toolInput: unknown) => (legOpen() ? toolGate(toolName, toolInput) : legEnded),
       onSession: session => {
         sessionModel.live = session;
       },
@@ -6769,6 +6779,7 @@ async function* runHarness(
         legError = e as Error;
       }
     } finally {
+      thisLeg.open = false;
       legLive.v = false;
       sessionModel.live = null;
       if (control) control.interruptLeg = null;
