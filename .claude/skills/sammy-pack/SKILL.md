@@ -84,6 +84,23 @@ the run proceeds as approved instead of blocking on approval. Defaults to
 `false` (every lock pauses for human approval). Read only off the orchestration
 root — a value on a child node is ignored.
 
+If the root node sets `execution: "harness"`, YOU are the harness: do NOT
+dispatch an Agent-tool subagent per agent step. Work through the steps
+yourself, one at a time, in the order the tree lists them (a `phases` section
+flattens into its steps; a `parallel` of single steps may go in any order among
+themselves; any other composite — `loop`, `map`, `route`, … — runs as this skill
+describes below, as one step). For each step: read its agent file as the
+guidelines and its `prompt` as the task, and do it; a step with `skill: "<name>"`
+is done by running that skill with the Skill tool; `code` / `http` / `wait`
+steps run exactly as written. How strictly to keep the order is the root's
+`harness.follow`: `strict` (default) — in order, a step starts only when the one
+before it is done; `loose` — any order, every required step done before you
+finish; `advisory` — you may skip a step, saying why, and the final report
+lists it as skipped. Gates (`lock`), budgets and the sandbox hold in every mode.
+`harness.instructions` is extra guidance for you; `harness.model`,
+`harness.maxTurns` and `harness.lockFollow` only matter to a server run. A
+pipeline run (`execution` absent or `"pipeline"`) ignores `skill`.
+
 If the root node carries a `concurrency` block (`{ group, policy? }`), it
 declares mutual exclusion for runs that share an external resource: runs whose
 root names the same `concurrency.group` are never allowed to overlap. The group

@@ -85,6 +85,10 @@ const STRUCTURAL = new Set([
  *    shape the scrubber's pattern pass would destroy). */
 const STRUCTURAL_BY_VARIANT: Record<string, string[]> = {
   'worktrees-ready': ['path', 'base'],
+  // harness-start: a step's skill / kind / gate / group / section / loop are names
+  // from the orchestration file (structural, like phaseName); the session id
+  // is a UUID the engine minted and `cwd` the run's working directory.
+  'harness-start': ['skill', 'engineKind', 'gate', 'group', 'section', 'loop', 'sessionId', 'cwd'],
 };
 
 /** Field names that are free text by their nature and must be scrubbed even

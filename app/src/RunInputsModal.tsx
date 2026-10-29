@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { cloneRepoUrl, locateRepo } from './api';
-import { type Node } from './types';
+import { type ExecutionMode, type HarnessFollow, type Node } from './types';
 import { declaredAgentTools } from './declaredTools';
 import { getAllowAgentTools } from './store/apiKey';
+import { FOLLOW_HELP, getHarnessSettings } from './store/harness';
+import { followLabel, HARNESS_FOLLOWS } from './llm/harness';
+import type { RunModeOptions } from './store/runs';
+
+const FOLLOW_RANK: Record<HarnessFollow, number> = { advisory: 0, loose: 1, strict: 2 };
 
 export type RunInputFile = { filename: string; mediaType: string; data: string };
 export type RunInputValues = Record<
@@ -120,7 +125,10 @@ export function RunInputsModal({
 }: {
   orchestration: Node | null;
   onClose: () => void;
-  onRun: (values: RunInputValues, instructions: string) => void;
+  /** `mode` carries the dialog's Pipeline / Harness choice and, for a
+   *  harness the user changed, the strictness — absent fields mean "as the
+   *  orchestration (or Settings) says". */
+  onRun: (values: RunInputValues, instructions: string, mode: RunModeOptions) => void;
   defaultInstructions?: string;
   /** Why the last ▶ Run from this dialog didn't start (the dialog stays open to say so). */
   error?: string | null;
@@ -141,6 +149,12 @@ export function RunInputsModal({
   // to run (or left a required field empty) — not shouted on open.
   const [attempted, setAttempted] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  // Pipeline or harness, and the harness's strictness. `follow` stays null
+  // until the user picks one, so an untouched dialog leaves the decision to
+  // the orchestration / Settings (and the run records that as its source).
+  const [execution, setExecution] = useState<ExecutionMode>('pipeline');
+  const [follow, setFollow] = useState<HarnessFollow | null>(null);
+  const [workspaceFollow, setWorkspaceFollow] = useState<HarnessFollow | null>(null);
   // First text field — focused when the dialog opens so the user can type
   // straight away (falls back to the instructions box).
   const firstFieldRef = useRef<TextInput | null>(null);
@@ -153,8 +167,21 @@ export function RunInputsModal({
     setAttempted(false);
     setTouched({});
     setInstructions(defaultInstructions ?? '');
+    setExecution(orchestration?.execution ?? 'pipeline');
+    setFollow(null);
     // Re-seed when a different orchestration / default is loaded into the modal.
   }, [orchestration, defaultInstructions]);
+
+  useEffect(() => {
+    if (!orchestration) return;
+    let live = true;
+    getHarnessSettings()
+      .then(s => live && setWorkspaceFollow(s.follow))
+      .catch(() => live && setWorkspaceFollow(null));
+    return () => {
+      live = false;
+    };
+  }, [orchestration]);
 
   useEffect(() => {
     if (!orchestration) return;
@@ -246,7 +273,10 @@ export function RunInputsModal({
     setValues(v => ({ ...v, ...overrides }));
     // The instructions box maps to the run's initial input. Trim to keep an
     // empty box equivalent to "no initial input" (same as a plain ▶ Run).
-    onRun(collect(overrides), instructions.trim());
+    onRun(collect(overrides), instructions.trim(), {
+      ...(execution !== (orchestration.execution ?? 'pipeline') ? { execution } : {}),
+      ...(execution === 'harness' && follow ? { follow } : {}),
+    });
   };
 
   // Run if the form is valid; otherwise surface the missing-input hint.
@@ -313,6 +343,14 @@ export function RunInputsModal({
               )}
             </View>
           ))}
+          <RunModePicker
+            orchestration={orchestration}
+            execution={execution}
+            onExecution={setExecution}
+            follow={follow}
+            onFollow={setFollow}
+            workspaceFollow={workspaceFollow}
+          />
           {/* ALWAYS rendered — the optional initial-input box. Maps to the
               run's `state.input` (`${input}`). Never required, even when
               declared inputs above are. */}
@@ -395,6 +433,88 @@ export function RunInputsModal({
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+/** "How to run": Pipeline or Harness, and for a harness how strictly it
+ *  follows the steps. Shows where the default comes from, and a locked
+ *  orchestration's floor (only stricter choices are offered). */
+function RunModePicker({
+  orchestration,
+  execution,
+  onExecution,
+  follow,
+  onFollow,
+  workspaceFollow,
+}: {
+  orchestration: Node;
+  execution: ExecutionMode;
+  onExecution: (e: ExecutionMode) => void;
+  follow: HarnessFollow | null;
+  onFollow: (f: HarnessFollow) => void;
+  workspaceFollow: HarnessFollow | null;
+}) {
+  const declared = orchestration.harness?.follow;
+  const locked = orchestration.harness?.lockFollow === true;
+  const floor: HarnessFollow = declared ?? 'strict';
+  const fallback: { value: HarnessFollow; from: string } = declared
+    ? { value: declared, from: 'this orchestration' }
+    : workspaceFollow
+      ? { value: workspaceFollow, from: 'Settings' }
+      : { value: 'strict', from: 'the default' };
+  const effective = follow ?? fallback.value;
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>How to run</Text>
+      <View style={styles.pillRow} accessibilityRole="radiogroup" accessibilityLabel="How to run">
+        {(['pipeline', 'harness'] as const).map(m => (
+          <Pressable
+            key={m}
+            onPress={() => onExecution(m)}
+            style={[styles.pill, execution === m && styles.pillOn]}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: execution === m }}
+            accessibilityLabel={m === 'pipeline' ? 'Pipeline' : 'Harness'}>
+            <Text style={[styles.pillText, execution === m && styles.pillTextOn]}>
+              {m === 'pipeline' ? 'Pipeline' : 'Harness'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.hint}>
+        {execution === 'pipeline'
+          ? 'Each agent step gets its own agent; the engine walks the steps.'
+          : 'One agent follows the steps and does each itself — with the skill a step names, if any. Script, HTTP and wait steps still run exactly as written, and gates still stop for approval.'}
+      </Text>
+      {execution === 'harness' ? (
+        <>
+          <Text style={[styles.label, styles.subLabel]}>How strictly</Text>
+          <View style={styles.pillRow} accessibilityRole="radiogroup" accessibilityLabel="How strictly">
+            {HARNESS_FOLLOWS.map(f => {
+              const tooLoose = locked && FOLLOW_RANK[f] < FOLLOW_RANK[floor];
+              const on = effective === f;
+              return (
+                <Pressable
+                  key={f}
+                  onPress={() => !tooLoose && onFollow(f)}
+                  disabled={tooLoose}
+                  style={[styles.pill, on && styles.pillOn, tooLoose && styles.buttonDisabled]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: on, disabled: tooLoose }}
+                  accessibilityLabel={followLabel(f)}>
+                  <Text style={[styles.pillText, on && styles.pillTextOn]}>{followLabel(f)}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.hint}>
+            {FOLLOW_HELP[effective]}
+            {follow ? '' : ` (Set by ${fallback.from}.)`}
+            {locked ? ` This orchestration is locked at ${followLabel(floor)} or stricter.` : ''}
+          </Text>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -532,6 +652,20 @@ const styles = StyleSheet.create({
   filePrompt: { fontSize: 14, color: '#6b7280' },
   fileChosen: { fontSize: 14, color: '#111827', fontWeight: '600' },
   errorText: { fontSize: 11, color: '#dc2626', marginTop: 2 },
+  subLabel: { marginTop: 6 },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  pill: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+  },
+  pillOn: { borderColor: '#2563eb', backgroundColor: '#eff6ff' },
+  pillText: { fontSize: 13, color: '#374151' },
+  pillTextOn: { color: '#1d4ed8', fontWeight: '600' },
+  hint: { fontSize: 11, color: '#6b7280' },
   modalButtonRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   cloneOffer: {
     gap: 8,

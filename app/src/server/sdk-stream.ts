@@ -181,6 +181,18 @@ export type SdkStreamChunk =
       postTokens?: number;
     }
   | {
+      /** Cumulative spend so far, after each turn's usage arrives — only when
+       *  the caller asked (`reportUsage`). Output tokens are final only on
+       *  `done`, so this is a running floor, not the bill. */
+      type: 'usage';
+      usage: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+      };
+    }
+  | {
       type: 'done';
       usage: {
         inputTokens: number;
@@ -299,6 +311,17 @@ export type SdkStreamParams = {
    *  this param) → the built-in default below (30_000_000). Set 0 to disable.
    *  Pair with low `maxTurns` + a run `budget` for defence in depth. */
   maxAgentTokens?: number;
+  /** Start a new session with this id (a UUID) — a harness run picks it up
+   *  front so it can show the resume command before the agent says anything. */
+  sessionId?: string;
+  /** Continue this saved session (a harness run's next leg, after a gate). */
+  resume?: string;
+  /** Only these skills are listed to the agent and runnable by its Skill
+   *  tool. Undefined leaves the SDK's own default. */
+  skills?: string[];
+  /** Yield a `usage` chunk after each turn's usage arrives (a harness
+   *  session enforces budgets mid-leg with it). */
+  reportUsage?: boolean;
   /** The SDK entry point. Defaults to the real `query`, resolved by a dynamic
    *  import that jest cannot execute — so this is the seam through which the
    *  options this module builds and the errors it stamps are tested without
@@ -345,6 +368,10 @@ export async function* streamSdk(
     env,
     cwd,
     maxAgentTokens = 30_000_000,
+    sessionId,
+    resume,
+    skills,
+    reportUsage = false,
   } = params;
 
   // Pre-approval allowlist: the built-in `tools` plus any explicitly pre-approved
@@ -490,6 +517,8 @@ export async function* streamSdk(
       hooks,
       ...(mergedEnv ? { env: mergedEnv } : {}),
       ...(cwd ? { cwd } : {}),
+      ...(resume ? { resume } : sessionId ? { sessionId } : {}),
+      ...(skills ? { skills } : {}),
       // Only the MCP servers this call names (`mcpServers`, from the phase's
       // `mcp`). Without the flag the agent also inherits every server in the
       // host's own Claude configuration and account connectors — a step that
@@ -570,6 +599,18 @@ export async function* streamSdk(
         // Accumulate (don't overwrite) — every turn's input re-sends the full
         // context, so the sum is the agent's true spend.
         ledger.record(ev.message.usage as unknown as TurnUsage);
+        if (reportUsage) {
+          lastYieldAt = Date.now();
+          yield {
+            type: 'usage',
+            usage: {
+              inputTokens: ledger.inputTokens,
+              outputTokens: ledger.outputTokens,
+              cacheReadTokens: ledger.cacheReadTokens,
+              cacheWriteTokens: ledger.cacheWriteTokens,
+            },
+          };
+        }
         // Circuit-breaker: a single agent cannot exceed maxAgentTokens. Catches
         // runaway sim-vision loops before they exhaust the whole usage quota.
         //

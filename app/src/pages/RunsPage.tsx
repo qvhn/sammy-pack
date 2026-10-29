@@ -19,6 +19,7 @@ import { takeRequestedRun } from '../store/runSelection';
 import { useToast } from '../store/toast';
 import { type Node } from '../types';
 import { RunInputsModal } from '../RunInputsModal';
+import { HarnessPanel } from './HarnessPanel';
 import { getAuthMode } from '../store/apiKey';
 import { ArtifactViewer } from './ArtifactViewer';
 import { Card, Hint, Page } from './Page';
@@ -477,7 +478,7 @@ export function RunsPage() {
           orchestration={replayPending}
           defaultInstructions={replayDefaultInstructions}
           onClose={() => setReplayPending(null)}
-          onRun={(values, instructions) => {
+          onRun={(values, instructions, mode) => {
             const orch = replayPending;
             setReplayPending(null);
             if (!orch) return;
@@ -487,10 +488,12 @@ export function RunsPage() {
             // server-owned path. With no declared inputs we honor the auth
             // mode just like a plain replay did (proxy → server, else browser).
             const hasDeclaredInputs = Object.keys(values).length > 0;
+            // A harness only runs server-side (its agent hosts the step tools).
+            const harness = (mode.execution ?? orch.execution) === 'harness';
             const useServer =
-              hasDeclaredInputs || getAuthMode() === 'claude-code-proxy';
+              hasDeclaredInputs || harness || getAuthMode() === 'claude-code-proxy';
             const ok = useServer
-              ? startServerRun(orch, initialInput, values)
+              ? startServerRun(orch, initialInput, values, mode)
               : startRun(orch, initialInput);
             if (ok) setSelectedId(ACTIVE_ID);
           }}
@@ -599,6 +602,9 @@ function gatedPhaseOf(run: Run): string | null {
     const e = run.events[i] as { type: string; pausedFor?: string; phaseName?: string };
     // Whichever came last decides what the run is parked on.
     if (e.type === 'wait-started') return null;
+    // Resumed since the last gate: that gate was decided, and this pause is
+    // something else (a harness terminal that went idle, a hand pause).
+    if (e.type === 'run-resumed') return null;
     if (e.type === 'lock-gate' && e.phaseName) return e.phaseName;
   }
   // No events loaded yet (a list summary): trust the summary's own fields.
@@ -916,6 +922,11 @@ function RunDetailCard({
           onReject={() => onGate('reject')}
         />
       )}
+      <HarnessPanel
+        run={run}
+        gatedPhase={serverGate?.phaseName ?? null}
+        {...(serverGate ? { onApproveGate: () => onGate('approve') } : {})}
+      />
       <ArtifactList run={run} />
       <BlockList events={run.events} version={run.eventVersion} />
       {isActive && activePhase && !isProgramPhase(phaseAgentPath(run.events, activePhase)) && (

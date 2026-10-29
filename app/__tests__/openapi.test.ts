@@ -394,6 +394,22 @@ describe('OpenAPI document — documented routes conform to the live server', ()
     }
   });
 
+  test('harness settings round-trip, and a pipeline run cannot be taken over in a terminal', async () => {
+    const before = await getJson<AnyObj>(`${m.baseUrl}/api/harness/settings`);
+    expectConforms(before, documentedResponse('/api/harness/settings', 'get', '200'), 'GET /api/harness/settings');
+    expect(before.follow).toBeNull();
+    const put = await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: 'loose' });
+    expect(put.status).toBe(200);
+    expectConforms(put.body, documentedResponse('/api/harness/settings', 'put', '200'), 'PUT /api/harness/settings');
+    expect(put.body.follow).toBe('loose');
+    expect((await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: 'sloppy' })).status).toBe(400);
+    expect((await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: null })).body.follow).toBeNull();
+
+    const start = await postJson<{ id: string }>(`${m.baseUrl}/api/runs/start`, { orchestrationName: 'echo' });
+    const res = await fetch(`${m.baseUrl}/api/runs/${start.body.id}/terminal`);
+    expect(res.status).toBe(409);
+  });
+
   test('GET /api/deliveries/stats conforms (and is documented as owner-scoped)', async () => {
     const stats = await getJson<AnyObj>(`${m.baseUrl}/api/deliveries/stats`);
     expectConforms(

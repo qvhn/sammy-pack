@@ -477,6 +477,105 @@ export function buildOpenApiDoc(): object {
           },
         },
       },
+      '/api/runs/{id}/terminal': {
+        get: {
+          tags: ['runs'],
+          summary: 'Whether a terminal is driving this harness run',
+          description:
+            'Only whether — the command that opens the terminal holds the leg’s ' +
+            'token, so it is returned by the POST (`peek: true` reads it without ' +
+            'taking over), to callers allowed to write.',
+          parameters: [runIdParam],
+          responses: {
+            '200': jsonResponse('Terminal state.', {
+              type: 'object',
+              properties: { live: { type: 'boolean' } },
+              required: ['live'],
+            }),
+            '404': errorResponse('Run not found.'),
+            '409': errorResponse('Not a harness run.'),
+          },
+        },
+        post: {
+          tags: ['runs'],
+          summary: 'Take a harness run over in a terminal',
+          description:
+            'One driver at a time. A running harness run ends its server agent’s ' +
+            'session leg (after any engine step in progress) and the next leg is ' +
+            'the terminal’s; a run paused off a gate, interrupted or errored ' +
+            'resumes with the terminal driving. A gate must be decided first. ' +
+            '`open: true` also opens a terminal window on the server’s machine ' +
+            '(local requests only). The terminal leg ends when the run finishes, ' +
+            'stops at a gate, is handed back, or no step tool is called for ' +
+            'SAMMY_HARNESS_TERMINAL_IDLE_SEC (default 30 min — the run then pauses).',
+          security: mutatingSecurity,
+          parameters: [runIdParam],
+          requestBody: jsonBody({
+            type: 'object',
+            properties: {
+              open: { type: 'boolean' },
+              peek: { type: 'boolean', description: 'Only read the live leg’s command; never take over.' },
+            },
+          }),
+          responses: {
+            '200': jsonResponse('The terminal leg is live.', {
+              type: 'object',
+              properties: {
+                live: { type: 'boolean' },
+                command: { type: 'string' },
+                opened: {
+                  type: 'object',
+                  properties: { opened: { type: 'boolean' }, reason: { type: 'string' } },
+                },
+              },
+              required: ['live', 'command'],
+            }),
+            '404': errorResponse('Run not found.'),
+            '409': errorResponse(
+              'Not a harness run, waiting at a gate, finished, or not executing in this process.',
+            ),
+            '504': errorResponse('The run did not hand over within a minute.'),
+          },
+        },
+      },
+      '/api/runs/{id}/handback': {
+        post: {
+          tags: ['runs'],
+          summary: 'Hand a terminal-driven harness run back to the server’s agent',
+          description: 'Ends the terminal’s leg; the server’s agent continues the same session.',
+          security: mutatingSecurity,
+          parameters: [runIdParam],
+          responses: {
+            '200': jsonResponse('Handed back.', { type: 'object', properties: { ok: { type: 'boolean' } } }),
+            '404': errorResponse('Run not found.'),
+            '409': errorResponse('No terminal is driving this run.'),
+          },
+        },
+      },
+      '/api/harness/settings': {
+        get: {
+          tags: ['ops'],
+          summary: 'Workspace defaults for harness runs',
+          description:
+            '`follow` is the default strictness when neither the run nor the ' +
+            'orchestration says (null = the built-in `strict`). Stored in ' +
+            '`harness.json` at the workspace root, so triggers and API starts ' +
+            'follow it too.',
+          responses: {
+            '200': jsonResponse('The defaults.', ref('HarnessSettings')),
+          },
+        },
+        put: {
+          tags: ['ops'],
+          summary: 'Set the workspace defaults for harness runs',
+          security: mutatingSecurity,
+          requestBody: jsonBody(ref('HarnessSettings')),
+          responses: {
+            '200': jsonResponse('The defaults as stored.', ref('HarnessSettings')),
+            '400': errorResponse('Invalid JSON, or `follow` is not strict | loose | advisory | null.'),
+          },
+        },
+      },
       '/api/runs/{id}/fork': {
         post: {
           tags: ['runs'],
@@ -1739,6 +1838,21 @@ export function buildOpenApiDoc(): object {
             initialInput: { type: 'string' },
             model: { type: 'string' },
             allowAgentTools: { type: 'boolean' },
+            execution: {
+              enum: ['pipeline', 'harness'],
+              description:
+                'Run as a pipeline (each agent step its own agent) or a harness ' +
+                '(one agent follows the steps and does each itself), overriding ' +
+                'the orchestration’s own `execution`.',
+            },
+            follow: {
+              enum: ['strict', 'loose', 'advisory'],
+              description:
+                'Harness strictness for this run, overriding the orchestration’s ' +
+                '`harness.follow` and the workspace default — unless the ' +
+                'orchestration sets `harness.lockFollow`, which only lets a run ' +
+                'make it stricter. Recorded on the run with where it came from.',
+            },
             inputs: {
               type: 'object',
               description:
@@ -1764,6 +1878,13 @@ export function buildOpenApiDoc(): object {
             },
           },
           required: ['orchestrationName'],
+        },
+        HarnessSettings: {
+          type: 'object',
+          properties: {
+            follow: { type: ['string', 'null'], enum: ['strict', 'loose', 'advisory', null] },
+          },
+          required: ['follow'],
         },
         RunStartResponse: {
           type: 'object',

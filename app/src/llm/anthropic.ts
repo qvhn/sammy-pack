@@ -40,6 +40,12 @@ export type StreamEvent =
       preTokens: number;
       postTokens?: number;
     }
+  | {
+      /** Cumulative spend so far (server SDK path, harness sessions only —
+       *  see sdk-stream's `reportUsage`). */
+      type: 'usage';
+      usage: Usage;
+    }
   | { type: 'done'; usage: Usage };
 
 type CallParams = {

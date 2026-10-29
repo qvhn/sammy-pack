@@ -33,6 +33,9 @@ import {
   type AuthMode,
 } from '../store/apiKey';
 import { getBudgetConfig, saveBudgetConfig, type BudgetConfig } from '../store/budget';
+import { FOLLOW_HELP, getHarnessSettings, saveHarnessSettings } from '../store/harness';
+import { followLabel, HARNESS_FOLLOWS } from '../llm/harness';
+import type { HarnessFollow } from '../types';
 import { TOKEN_KEY, USER_KEY } from '../../web/api-auth';
 import { Card, Hint, Page } from './Page';
 import { navigateTo } from '../lib/hashRoute';
@@ -278,6 +281,14 @@ export function SettingsPage() {
         subtitle="Per-day + per-month USD limits, enforced server-side against the durable run store. The Run button warns at 80%; at 100% the server refuses new runs."
         >
         <BudgetPanel />
+      </Card>
+      </CollapsibleSection>
+
+      <CollapsibleSection title="Harness runs" hint="how strictly a harness follows the steps">
+      <Card
+        title="Default strictness"
+        subtitle="A harness run has one agent follow an orchestration's steps and do each itself. This is how closely it must keep to them when neither the orchestration (harness.follow) nor the Run dialog says. Stored on the server, so runs started by triggers and the API follow it too.">
+        <HarnessDefaultsPanel />
       </Card>
       </CollapsibleSection>
 
@@ -946,6 +957,61 @@ function BudgetPanel() {
         may spend of it. Caps are enforced server-side — a run is refused
         once either is reached, and a long run is halted if its own cost
         crosses the line.
+      </Hint>
+    </View>
+  );
+}
+
+function HarnessDefaultsPanel() {
+  const [follow, setFollow] = useState<HarnessFollow | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getHarnessSettings()
+      .then(s => {
+        setFollow(s.follow);
+        setLoaded(true);
+      })
+      .catch(e => setError(`could not read the current default (${(e as Error).message}).`));
+  }, []);
+
+  function choose(next: HarnessFollow) {
+    setError(null);
+    saveHarnessSettings({ follow: next })
+      .then(s => {
+        setFollow(s.follow);
+        setSavedAt(Date.now());
+        setTimeout(() => setSavedAt(null), 1500);
+      })
+      .catch(e => setError((e as Error).message));
+  }
+
+  const effective = follow ?? 'strict';
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={styles.buttonRow} accessibilityRole="radiogroup" accessibilityLabel="Default strictness">
+        {HARNESS_FOLLOWS.map(f => (
+          <Pressable
+            key={f}
+            onPress={() => loaded && choose(f)}
+            disabled={!loaded}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: effective === f, disabled: !loaded }}
+            accessibilityLabel={followLabel(f)}
+            style={[styles.followPill, effective === f && styles.followPillOn]}>
+            <Text style={[styles.followPillText, effective === f && styles.followPillTextOn]}>{followLabel(f)}</Text>
+          </Pressable>
+        ))}
+        {savedAt && <Text style={styles.savedNote}>Saved.</Text>}
+      </View>
+      <Text style={styles.label}>{FOLLOW_HELP[effective]}</Text>
+      {error && <Text style={{ color: '#dc2626', fontSize: 11 }}>{error}</Text>}
+      <Hint>
+        The Run dialog can change it for one run, and an orchestration can set
+        its own (harness.follow) — or lock it, so a run may only make it
+        stricter. Gates, budgets and the sandbox hold in every mode.
       </Hint>
     </View>
   );
@@ -2100,6 +2166,17 @@ const styles = StyleSheet.create({
   },
   clearButtonText: { color: '#6b7280', fontWeight: '500', fontSize: 12 },
   savedNote: { fontSize: 12, color: '#059669', fontWeight: '500' },
+  followPill: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+  },
+  followPillOn: { borderColor: '#2563eb', backgroundColor: '#eff6ff' },
+  followPillText: { fontSize: 13, color: '#374151' },
+  followPillTextOn: { color: '#1d4ed8', fontWeight: '600' },
   authRow: {
     flexDirection: 'row',
     gap: 8,

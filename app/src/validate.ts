@@ -560,7 +560,16 @@ function validateNode(
   }
 
   const presentKinds = COMPOSITE_KEYS.filter(k => node[k] !== undefined);
-  if (presentKinds.length === 0) {
+  if (presentKinds.length === 0 && typeof node.skill === 'string' && node.skill.trim() !== '') {
+    // A step done by a skill is a body only to a harness; a pipeline run of
+    // this tree refuses at start (orchestrationUsesSkillOnlySteps).
+    errors.push({
+      path: render(pathParts),
+      message: `node has only a skill ("${node.skill}") — it runs in harness mode only; add an agent to also run it as a pipeline`,
+      nodeName: ctxName,
+      severity: 'warning',
+    });
+  } else if (presentKinds.length === 0) {
     errors.push({
       path: render(pathParts),
       message:
@@ -1083,6 +1092,66 @@ function validateNode(
         severity: 'warning',
       });
     }
+  }
+
+  if (node.execution !== undefined) {
+    if (node.execution !== 'pipeline' && node.execution !== 'harness') {
+      errors.push({
+        path: render(here('execution')),
+        message: 'execution must be "pipeline" or "harness"',
+        nodeName: ctxName,
+        severity: 'error',
+      });
+    } else if (pathParts.length > 0) {
+      errors.push({
+        path: render(here('execution')),
+        message: 'execution is read only off the orchestration root — on a child node it is ignored',
+        nodeName: ctxName,
+        severity: 'warning',
+      });
+    }
+  }
+
+  if (node.harness !== undefined) {
+    const h = node.harness as unknown;
+    if (!h || typeof h !== 'object' || Array.isArray(h)) {
+      errors.push({ path: render(here('harness')), message: 'harness must be an object', nodeName: ctxName, severity: 'error' });
+    } else {
+      const { follow, maxTurns } = node.harness;
+      if (follow !== undefined && !['strict', 'loose', 'advisory'].includes(follow)) {
+        errors.push({
+          path: render(here('harness.follow')),
+          message: 'harness.follow must be one of strict | loose | advisory',
+          nodeName: ctxName,
+          severity: 'error',
+        });
+      }
+      if (maxTurns !== undefined && (typeof maxTurns !== 'number' || !Number.isInteger(maxTurns) || maxTurns < 1)) {
+        errors.push({
+          path: render(here('harness.maxTurns')),
+          message: 'harness.maxTurns must be an integer ≥ 1',
+          nodeName: ctxName,
+          severity: 'error',
+        });
+      }
+      if (pathParts.length > 0) {
+        errors.push({
+          path: render(here('harness')),
+          message: 'harness is read only off the orchestration root — on a child node it is ignored',
+          nodeName: ctxName,
+          severity: 'warning',
+        });
+      }
+    }
+  }
+
+  if (node.skill !== undefined && (typeof node.skill !== 'string' || node.skill.trim() === '')) {
+    errors.push({
+      path: render(here('skill')),
+      message: 'skill must be a non-empty skill name (or plugin:skill)',
+      nodeName: ctxName,
+      severity: 'error',
+    });
   }
 
   if (node.lifecycle) {

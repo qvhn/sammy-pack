@@ -23,6 +23,7 @@
  * plus the live event mirror, which is freed when the run finishes.
  */
 
+import { decodeStepRecord } from '../llm/harness';
 import { randomUUID } from 'node:crypto';
 import { RunPauseRequested, type PendingWaitSpec } from '../llm/executor';
 import { deriveWaitState, type WaitSeed } from './wait-resolution';
@@ -511,6 +512,32 @@ async function runInBackground(
               `[run-controller] checkpoint write failed for ${id}:`,
               writeErr,
             );
+          }
+        }
+      } else if (event.type === 'harness-step') {
+        // A harness step's end (and the harness session id) is a checkpoint
+        // like a leaf's phase-end, under `harness/<key>`. Unlike a leaf it may
+        // be rewritten: a loose-order harness can go back and redo a step,
+        // and a failed step can be retried — the latest record is the truth.
+        const ev = event as { replayKey?: string; record?: string };
+        if (typeof ev.replayKey === 'string' && typeof ev.record === 'string' && leafOutputs[ev.replayKey] !== ev.record) {
+          if (!(ev.replayKey in leafOutputs)) completedLeaves.push(ev.replayKey);
+          leafOutputs[ev.replayKey] = ev.record;
+          const rec = decodeStepRecord(ev.record);
+          if (rec?.status === 'done' && typeof rec.output === 'string') lastOutput = rec.output;
+          try {
+            await store.updateRunStatus(
+              id,
+              {
+                completedLeaves,
+                lastOutput,
+                stateJson: { leafOutputs, ...(resolvedInputs ? { resolvedInputs } : {}) },
+              },
+              { requireLease: true },
+            );
+          } catch (writeErr) {
+            if (writeErr instanceof LeaseLostError) throw writeErr;
+            console.error(`[run-controller] checkpoint write failed for ${id}:`, writeErr);
           }
         }
       } else if (event.type === 'phase-error') {

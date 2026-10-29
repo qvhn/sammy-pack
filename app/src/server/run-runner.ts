@@ -42,6 +42,9 @@ import {
   type StreamFn,
 } from '../llm/executor';
 import { streamSdk } from './sdk-stream';
+import { buildHarnessMcpServer, harnessControlFor, harnessToolGateHook, skillInstalled } from './harness-session';
+import { HARNESS_TOOL_SERVER, resolveFollow, type ResolvedFollow } from '../llm/harness';
+import { harnessSettingsFile, readHarnessSettingsSync } from './harness-settings';
 import type { RunContext } from './run-context';
 
 /** Wrap a run's event stream in a secret-scrubbing pass. Redacts known
@@ -88,6 +91,10 @@ export type ExecutorSourceOpts = {
   deliveredSignals?: Record<string, string[]>;
   /** `artifact` events to carry into this run (a fork's replayed leaves). */
   seedArtifacts?: Array<Extract<RunEvent, { type: 'artifact' }>>;
+  /** Harness strictness the start path resolved (Run dialog > orchestration
+   *  > Settings > strict) and where it came from. A resumed leg omits it and
+   *  the executor reads the snapshot's `harness.follow`. */
+  harnessFollow?: ResolvedFollow;
 };
 
 /** Parse SAMMY_MAX_AGENT_TOKENS into a per-agent token ceiling. Accepts a
@@ -368,6 +375,23 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
           ],
         } as typeof hooksOption;
       }
+      // Harness session: the executor's step tools as an in-process MCP
+      // server, and its per-step tool gate as a PreToolUse hook on every tool.
+      if (params.harness) {
+        mcpServers = {
+          ...(mcpServers ?? {}),
+          [HARNESS_TOOL_SERVER]: await buildHarnessMcpServer(params.harness.tools),
+        };
+        if (params.harness.toolGate) {
+          hooksOption = {
+            ...(hooksOption ?? {}),
+            PreToolUse: [
+              ...((hooksOption?.PreToolUse as unknown[] | undefined) ?? []),
+              harnessToolGateHook(params.harness.toolGate),
+            ],
+          } as typeof hooksOption;
+        }
+      }
       const userMessage = params.messages[0]?.content ?? '';
       // Per-agent token ceiling precedence: per-phase node field
       // (params.maxAgentTokens, threaded from the executor) > env var
@@ -415,6 +439,13 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
           ? { env: params.env }
           : {}),
         ...(params.cwd ? { cwd: params.cwd } : {}),
+        ...(params.harness?.resume
+          ? { resume: params.harness.resume }
+          : params.harness?.sessionId
+            ? { sessionId: params.harness.sessionId }
+            : {}),
+        ...(params.harness?.skills ? { skills: params.harness.skills } : {}),
+        ...(params.harness ? { reportUsage: true } : {}),
       });
     };
   }
@@ -469,6 +500,19 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
     // credentials file must not get one into an artifact, a log or a ticket.
     const injectedSecrets = new Set<string>(registrySecretValues(credentialsFile));
 
+    // A harness run that didn't come through the start path (a trigger, a
+    // fork, a resumed leg whose snapshot predates the start path baking it
+    // in) still honors the workspace default.
+    const harnessFollow: ResolvedFollow | undefined =
+      ctx.orchestration.execution !== 'harness'
+        ? undefined
+        : (opts.harnessFollow ??
+          resolveFollow({
+            declared: ctx.orchestration.harness?.follow,
+            locked: ctx.orchestration.harness?.lockFollow,
+            workspaceDefault: readHarnessSettingsSync(harnessSettingsFile(root)).follow ?? undefined,
+          }));
+
     const run = (
       worktrees?: Awaited<ReturnType<typeof ensureWorktrees>>,
     ): AsyncIterable<RunEvent> => runOrchestration({
@@ -481,6 +525,16 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
       streamFn: buildServerStreamFn(c, injectedSecrets, credScope),
       // That stream refuses a sandbox-denied Bash command itself (PreToolUse).
       enforcesDeniedCommands: true,
+      // ...and hosts harness sessions (in-process step tools, resume, skills).
+      harnessSupported: true,
+      ...(harnessFollow ? { harnessFollow } : {}),
+      // A harness agent with no worktree works in the workspace root, where
+      // its project skills live and where `claude --resume` finds the session.
+      harnessCwd: root,
+      // The run's handle for a person taking it over in a terminal.
+      ...(harnessFollow && opts.runId ? { harnessControl: harnessControlFor(opts.runId) } : {}),
+      skillExists: (name: string) =>
+        skillInstalled(name, worktrees && worktrees.length === 1 ? worktrees[0].path : root),
       providerStreamFns,
       credentialsByName: readCredentialsByNameSync(credentialsFile, credScope),
       // Full entries (kind + fields) so a phase's `credential`/`credentials`

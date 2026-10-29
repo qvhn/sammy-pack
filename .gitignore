@@ -49,6 +49,8 @@ runs.db-shm
 runs.db-wal
 # Operator intake pauses (POST /api/orchestrations/<name>/pause) — runtime state.
 intake-pauses.json
+# Workspace defaults for harness runs (Settings → Harness runs) — per deployment.
+harness.json
 # Per-run git worktrees (root `worktrees`; SAMMY_WORKTREE_DIR overrides).
 .worktrees/
 # Cross-run memory store — per-deployment accumulated learnings, not source.
