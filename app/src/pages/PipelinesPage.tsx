@@ -32,6 +32,7 @@ import { OrchestrationTree } from '../OrchestrationTree';
 import { RunDock } from '../RunDock';
 import { PipelineEditor } from '../PipelineEditor';
 import { TriggersHead } from '../TriggersHead';
+import { RunsAsHead } from '../RunsAsHead';
 import { InputsHead } from '../InputsHead';
 import { RunInputsModal } from '../RunInputsModal';
 import { VersionHistoryPanel } from '../VersionHistoryPanel';
@@ -1440,9 +1441,13 @@ async function handleDuplicate() {
         <>
           <View style={styles.activeMeta}>
             <View style={styles.activeMetaRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                <Text style={styles.activeName}>{active.name}</Text>
-                <Text style={styles.activeStats}>{summarizeOrchestration(active)}</Text>
+              <View style={styles.activeTitleGroup}>
+                <Text style={styles.activeName} numberOfLines={1}>
+                  {active.name}
+                </Text>
+                <Text style={styles.activeStats} numberOfLines={1}>
+                  {summarizeOrchestration(active)}
+                </Text>
                 {complexityByOrch.has(active.name) && (
                   <ComplexityBadge
                     complexity={complexityByOrch.get(active.name) as Complexity}
@@ -1753,6 +1758,7 @@ async function handleDuplicate() {
                 triggers={active.triggers}
                 onChange={next => handleChange({ ...active, triggers: next })}
               />
+              <RunsAsHead orchestration={active} onChange={handleChange} />
             </View>
           )}
 
@@ -5084,7 +5090,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    // A narrow editor wraps the actions under the title rather than
+    // squeezing the title into a column.
+    flexWrap: 'wrap',
     gap: 12,
+    rowGap: 8,
     // The ⋮ overflow menu is an absolutely-positioned child of this row and
     // drops down OVER the description / validation / budget banners that
     // follow it inside activeMeta. Make the row its own raised stacking
@@ -5093,7 +5103,16 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 20,
   },
-  activeName: { fontSize: 16, fontWeight: '600', color: '#111827', flex: 1 },
+  activeTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  activeName: { fontSize: 16, fontWeight: '600', color: '#111827', flexShrink: 1 },
   activeDescription: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   // Collapsible description: a chevron toggles between full text and a single
   // truncated line so a long description doesn't dominate the header.
@@ -5107,6 +5126,9 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    flexShrink: 1,
+    maxWidth: '100%',
     gap: 8,
   },
   undoButton: {
@@ -5240,7 +5262,7 @@ const styles = StyleSheet.create({
   validationMsg: { fontSize: 11, color: '#1f2937' },
   validationPath: { fontSize: 10, color: '#6b7280', fontFamily: 'Menlo' },
   validationOverflow: { fontSize: 11, color: '#6b7280', fontStyle: 'italic' },
-  activeStats: { fontSize: 11, color: '#6b7280', fontFamily: 'Menlo' },
+  activeStats: { fontSize: 11, color: '#6b7280', fontFamily: 'Menlo', flexShrink: 0 },
   budgetBanner: {
     backgroundColor: '#fffbeb',
     borderWidth: 1,
@@ -5280,6 +5302,7 @@ const styles = StyleSheet.create({
 
   modeRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     paddingHorizontal: 24,
     paddingTop: 12,
