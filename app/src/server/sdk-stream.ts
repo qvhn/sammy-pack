@@ -322,6 +322,9 @@ export type SdkStreamParams = {
   /** Yield a `usage` chunk after each turn's usage arrives (a harness
    *  session enforces budgets mid-leg with it). */
   reportUsage?: boolean;
+  /** Called with the live session once the query exists (a harness switches
+   *  the model per step through it). */
+  onSession?: (session: { setModel: (model: string) => Promise<void> }) => void;
   /** The SDK entry point. Defaults to the real `query`, resolved by a dynamic
    *  import that jest cannot execute — so this is the seam through which the
    *  options this module builds and the errors it stamps are tested without
@@ -372,6 +375,7 @@ export async function* streamSdk(
     resume,
     skills,
     reportUsage = false,
+    onSession,
   } = params;
 
   // Pre-approval allowlist: the built-in `tools` plus any explicitly pre-approved
@@ -485,7 +489,7 @@ export async function* streamSdk(
   let beatTextBytes = 0;
   let lastActivity = 'start';
 
-  for await (const msg of query({
+  const session = query({
     // The cast targets the SDK's `string | AsyncIterable<SDKUserMessage>`
     // union — our local iterable matches structurally but the SDK's
     // SDKUserMessage type carries optional fields we don't bother filling.
@@ -555,7 +559,10 @@ export async function* streamSdk(
         : {}),
       includePartialMessages: true,
     },
-  })) {
+  });
+  onSession?.({ setModel: model => session.setModel(model) });
+
+  for await (const msg of session) {
     // Heartbeat accounting: every SDK message counts as activity; label the
     // newest one so a silent tail's beats say what the turn was doing
     // (thinking_delta, input_json_delta, assistant-message, tool-result, …).

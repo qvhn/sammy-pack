@@ -3,7 +3,7 @@
  * Claude Code login mode) and Claude models newer than the price table, which used to cost 0 and slipped past
  * every spend cap.
  */
-import { costUsd, knownModel } from '../src/llm/pricing';
+import { costUsd, knownModel, modelPrice } from '../src/llm/pricing';
 import { TokenLedger } from '../src/server/token-ledger';
 import { runOrchestration, type RunEvent, type StreamFn } from '../src/llm/executor';
 
@@ -26,20 +26,20 @@ describe('costUsd — prompt cache', () => {
 
 describe('costUsd — Claude models newer than the table', () => {
   it('prices an unlisted Sonnet like the listed Sonnets', () => {
-    expect(costUsd('claude-sonnet-5-5', 1_000_000, 0)).toBeCloseTo(3);
-    expect(costUsd('claude-sonnet-5-5', 0, 1_000_000)).toBeCloseTo(15);
+    expect(costUsd('claude-sonnet-9-9', 1_000_000, 0)).toBeCloseTo(3);
+    expect(costUsd('claude-sonnet-9-9', 0, 1_000_000)).toBeCloseTo(15);
   });
 
   it('prices an unlisted Opus like the most expensive listed Opus', () => {
-    expect(costUsd('claude-opus-5-5', 1_000_000, 1_000_000)).toBeCloseTo(90);
+    expect(costUsd('claude-opus-9-9', 1_000_000, 1_000_000)).toBeCloseTo(90);
   });
 
   it('prices an unknown Claude family like the most expensive listed Claude model', () => {
-    expect(costUsd('claude-fable-5-1', 1_000_000, 0)).toBeCloseTo(15);
+    expect(costUsd('claude-newfamily-9', 1_000_000, 0)).toBeCloseTo(15);
   });
 
   it('still flags them as unlisted, and still charges 0 for non-Claude models with no entry', () => {
-    expect(knownModel('claude-sonnet-5-5')).toBe(false);
+    expect(knownModel('claude-sonnet-9-9')).toBe(false);
     expect(costUsd('unknown-model', 1000, 1000)).toBe(0);
   });
 });
@@ -69,7 +69,7 @@ describe('executor — an agent phase is charged for its cache tokens', () => {
     for await (const ev of runOrchestration({
       orchestration: { name: 'flow', phases: [{ name: 'p', agent: 'agents/a.md' }] },
       apiKey: 'k',
-      model: 'claude-sonnet-5-5',
+      model: 'claude-sonnet-9-9',
       streamFn: stream,
       waitForApproval: async () => true,
       cancelled: { v: false },
@@ -84,5 +84,22 @@ describe('executor — an agent phase is charged for its cache tokens', () => {
     const cost = [...events].reverse().find(e => e.type === 'cost');
     if (cost?.type !== 'cost') throw new Error('expected a cost event');
     expect(cost.costUsd).toBeCloseTo(expected, 6);
+  });
+});
+
+describe('the current models', () => {
+  it('are priced from the published rates, including their own cache-read price', () => {
+    expect(costUsd('claude-opus-5-5', 1_000_000, 1_000_000)).toBeCloseTo(24);
+    expect(costUsd('claude-opus-5-5', 0, 0, { cacheReadTokens: 1_000_000 })).toBeCloseTo(0.2);
+    expect(costUsd('claude-sonnet-5-5', 1_000_000, 1_000_000)).toBeCloseTo(12);
+    expect(costUsd('claude-haiku-5-5', 1_000_000, 1_000_000)).toBeCloseTo(0.6);
+    expect(costUsd('claude-fable-5-1', 1_000_000, 1_000_000)).toBeCloseTo(60);
+    expect(costUsd('claude-opus-4-7', 1_000_000, 1_000_000)).toBeCloseTo(30);
+  });
+
+  it('modelPrice says when a price is an estimate', () => {
+    expect(modelPrice('claude-sonnet-5-5')).toMatchObject({ input: 2, output: 10, estimated: false });
+    expect(modelPrice('claude-sonnet-9-9')).toMatchObject({ estimated: true });
+    expect(modelPrice('mystery')).toBeUndefined();
   });
 });

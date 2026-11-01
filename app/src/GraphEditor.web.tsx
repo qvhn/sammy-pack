@@ -46,6 +46,9 @@ import {
 } from './graph-serialize';
 import { STATUS_COLOR, type NodeRunStatus } from './lib/runStatus';
 import { Tooltip } from './lib/Tooltip';
+import { useDefaultModel } from './lib/useDefaultModel';
+import { modelLabel, resolveModelName } from './llm/models';
+import { ModelPicker } from './ModelPicker';
 import {
   complexityDescription,
   complexityLabel,
@@ -1066,6 +1069,9 @@ function PhaseNodeView({ data, selected }: NodeProps<FlowPhaseNode>) {
         </div>
       )}
       {phase.agent && <div style={agentPath}>{phase.agent}</div>}
+      {phase.model ? (
+        <div style={modelTag}>◇ {modelLabel(resolveModelName(phase.model) ?? phase.model)}</div>
+      ) : null}
       {phase.description && (
         <div style={descriptionText}>{truncate(phase.description, 80)}</div>
       )}
@@ -3690,6 +3696,8 @@ function NodeSidePanel({
   onAddChild: (kind: AddChildKind) => void;
 }) {
   const composite = compositeKey(phase);
+  // What the Model dropdown's "Default" runs on for this phase.
+  const defaultModel = useDefaultModel(phase.agent);
   const canUngroup =
     isTopLevel && (composite === 'phases' || composite === 'loop');
   // Show loop conditions if the selected phase IS a loop, or is a body child
@@ -3805,6 +3813,18 @@ function NodeSidePanel({
                 onChange={e => onEdit('agent', e.target.value)}
                 placeholder="agents/pm.md"
                 style={inputStyle}
+              />
+            </Field>
+          )}
+
+          {currentBodyKind === 'agent' && (
+            <Field label="Model">
+              <ModelPicker
+                key={phase.name}
+                value={phase.model ?? ''}
+                onChange={m => onEdit('model', m || undefined)}
+                defaultModel={defaultModel.model}
+                defaultSource={defaultModel.source}
               />
             </Field>
           )}
@@ -4562,6 +4582,16 @@ const panelDivider: React.CSSProperties = {
   marginBottom: 14,
 };
 
+const modelTag: React.CSSProperties = {
+  alignSelf: 'flex-start',
+  marginTop: 4,
+  padding: '1px 6px',
+  borderRadius: 6,
+  background: '#dbeafe',
+  color: '#1d4ed8',
+  fontSize: 10,
+  fontWeight: 700,
+};
 const panelHint: React.CSSProperties = {
   fontSize: 11,
   color: '#92400e',

@@ -188,8 +188,10 @@ is missing. Orchestrations with no `inputs` take a single free-text
 initial input as today.
 
 If a node sets `provider` (`anthropic` / `openai` / `gemini` / `claude-code`)
-and / or `model`, route THAT phase to the chosen provider + model. Other
-phases use the run-wide default. A node can also set `credential: "name"`
+and / or `model`, route THAT phase to the chosen provider + model. A phase
+with no `model` whose agent file's frontmatter names one (`model: opus`, or a
+full id; `inherit` = none) runs on that model when it runs on Claude — pass it
+as the Agent tool's `model`. Other phases use the run-wide default. A node can also set `credential: "name"`
 (paired with `provider`) — that names an entry in the workspace's
 credentials.json registry whose value becomes the API key for THIS phase
 only. Server-owned runs only; from the CLI walk, surface a one-line note

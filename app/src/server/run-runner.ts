@@ -446,6 +446,7 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
             : {}),
         ...(params.harness?.skills ? { skills: params.harness.skills } : {}),
         ...(params.harness ? { reportUsage: true } : {}),
+        ...(params.harness?.onSession ? { onSession: params.harness.onSession } : {}),
       });
     };
   }

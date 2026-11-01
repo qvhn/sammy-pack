@@ -108,8 +108,12 @@ tool limits are the server agent's.
 - **One session, one process.** Every credential a step declares is in the
   session's environment for the whole run (the run says so when it starts),
   and the steps' MCP servers and hooks are attached to the whole session.
-- **Per-step model choice** isn't possible in one session; `harness.model` sets
-  the agent's model.
+- **A step's model** — its `model`, or its agent file's — is honored: the
+  session switches to it when the step starts and back to the session's model
+  (`harness.model`, else the run's) after it. A switch invalidates the
+  conversation's prompt cache once each way, so it pays off for a long step,
+  not a short one. A terminal-driven step can't be switched by the server —
+  its brief names the model to pick with `/model`.
 - A server harness run needs the server's Claude Code (SDK) path — the
   browser executor refuses it. The `sammy-pack` CLI skill walks a harness
   orchestration by being the harness itself: it does each step in the session

@@ -618,6 +618,14 @@ export type HarnessStreamOptions = {
   skills?: string[];
   /** Asked before every tool call: a reason to refuse it, or null to allow. */
   toolGate?: (toolName: string, input: unknown) => string | null;
+  /** Called once the session is up, with a way to switch its model (for the
+   *  next turn on) — a step that names its own model runs on it. */
+  onSession?: (session: HarnessSession) => void;
+};
+
+/** The live session a harness leg is driving. */
+export type HarnessSession = {
+  setModel: (model: string) => Promise<void>;
 };
 
 /** Where a terminal-driven leg's step tools are served, and how to reach

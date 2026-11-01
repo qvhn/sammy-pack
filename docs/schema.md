@@ -44,6 +44,7 @@ type Node = {
   tools?:   string[];      // declared connectors this leaf agent needs (validated at run start)
   prompt?:         string;  // literal user-message override, interpolated (replaces upstream output)
   maxTurns?:       number;  // per-phase SDK turn cap (default: the proxy's 250-turn limit)
+  model?:          string;  // this phase's model (default: its agent file's `model:`, else the run's)
   continueOnError?: boolean;// a failure emits phase-error but the enclosing sequence continues
 
   // root only
@@ -392,6 +393,16 @@ Replaces the upstream `lastOutput` as this phase's user message. Interpolated ag
 ```
 
 Caps the SDK turns one phase may take. Defaults to the proxy's 250-turn limit; raise it for agents that drive long iterative flows. Distinct from the cost-weighted token ceiling (`SAMMY_MAX_AGENT_TOKENS`), which bounds spend rather than turns.
+
+### `model` — this phase's model
+
+```jsonc
+{ "name": "architect", "agent": "agents/architect.md", "model": "claude-opus-5-5" }
+```
+
+Which model a phase runs on, highest first: the phase's own `model` → its agent file's `model:` frontmatter → the run's model (**Settings → Default model**, or what the run was started with). An agent file may name a full id or one of Claude Code's aliases (`opus`, `sonnet`, `haiku` — the newest of that family); `inherit` means no choice. An agent file's model only applies when the phase runs on Claude; a phase routed to another `provider` keeps the run's model unless it names one itself. The phase editor (Pipeline view) and the selected-phase panel (Graph view) have a **Model** dropdown — Default (showing what it resolves to), each listed model with its price per million tokens, or Other… for any id — and a phase card shows its model when it has one. Each `phase-end` records the model the phase ran on.
+
+In a harness run, the session switches to a step's model when the step starts and back after it (see [harness.md](./harness.md)).
 
 ### `continueOnError` — log it and move on
 

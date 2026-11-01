@@ -115,8 +115,8 @@ describe('pricing', () => {
 
   test('costUsd for opus per-M tokens', () => {
     // 1M input tokens = $15
-    expect(costUsd('claude-opus-4-7', 1_000_000, 0)).toBeCloseTo(15);
-    expect(costUsd('claude-opus-4-7', 0, 1_000_000)).toBeCloseTo(75);
+    expect(costUsd('claude-opus-4-7', 1_000_000, 0)).toBeCloseTo(5);
+    expect(costUsd('claude-opus-4-7', 0, 1_000_000)).toBeCloseTo(25);
   });
 
   test('costUsd returns 0 for unknown model', () => {
