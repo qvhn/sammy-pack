@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Run } from '../store/runs';
 import { followLabel } from '../llm/harness';
+import { modelLabel } from '../llm/models';
 import {
   deriveHarnessView,
   followSourceLabel,
@@ -151,6 +152,7 @@ export function HarnessPanel({
               {describe(s)}
               {s.group ? ` · with the other "${s.group}" steps, any order` : ''}
               {s.loop ? ` · ${s.loop}, pass ${s.pass ?? 1} of at most ${s.loopMax ?? '?'}` : ''}
+              {s.model ? ` · on ${modelLabel(s.model)}` : ''}
             </Text>
             {s.reason ? (
               <Text style={s.status === 'failed' ? styles.failReason : styles.muted}>

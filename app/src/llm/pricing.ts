@@ -6,11 +6,23 @@
  * cost telemetry shows up as $0 rather than misleading you).
  */
 
-type Price = { input: number; output: number };
+/** USD per million tokens. `cacheRead` when the model's cache-read price
+ *  isn't the usual 0.1x of input. */
+type Price = { input: number; output: number; cacheRead?: number };
 
 const PRICING: Record<string, Price> = {
+  // Claude 5.x family (Haiku 5.5: prompts up to 100K tokens — $0.50 / $2.50 beyond)
+  'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25 },
+  'claude-fable-5': { input: 10, output: 50 },
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2 },
+  'claude-opus-5': { input: 5, output: 25 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2 },
+  'claude-sonnet-5': { input: 2, output: 10 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
   // Claude 4.x family
-  'claude-opus-4-7': { input: 15, output: 75 },
+  'claude-opus-4-8': { input: 5, output: 25 },
+  'claude-opus-4-7': { input: 5, output: 25 },
+  'claude-opus-4-6': { input: 5, output: 25 },
   'claude-opus-4-5': { input: 15, output: 75 },
   'claude-opus-4-1': { input: 15, output: 75 },
   'claude-opus-4-0': { input: 15, output: 75 },
@@ -73,7 +85,7 @@ export function costUsd(
   return (
     (inputTokens * p.input +
       writes * p.input * CACHE_WRITE_MULTIPLIER +
-      reads * p.input * CACHE_READ_MULTIPLIER +
+      reads * (p.cacheRead ?? p.input * CACHE_READ_MULTIPLIER) +
       outputTokens * p.output) /
     1_000_000
   );
@@ -83,6 +95,15 @@ export function costUsd(
  * snapshot IDs still hit the table. */
 function normalize(model: string): string {
   return model.replace(/-\d{8}$/, '');
+}
+
+/** A model's price per million tokens, and whether it is an estimate (a
+ *  Claude model newer than the table, priced like its family's dearest). */
+export function modelPrice(model: string): (Price & { estimated: boolean }) | undefined {
+  const key = normalize(model);
+  if (PRICING[key]) return { ...PRICING[key], estimated: false };
+  const guess = claudeFallback(key);
+  return guess ? { ...guess, estimated: true } : undefined;
 }
 
 export function knownModel(model: string): boolean {

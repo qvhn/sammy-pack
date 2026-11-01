@@ -18,6 +18,9 @@ import {
 import { usePulse } from './lib/usePulse';
 import { STATUS_COLOR, type NodeRunStatus } from './lib/runStatus';
 import { getOrchestration } from './api';
+import { ModelPicker } from './ModelPicker';
+import { modelLabel, resolveModelName } from './llm/models';
+import { useDefaultModel } from './lib/useDefaultModel';
 import {
   acceptsChildren,
   addOrPromoteChild,
@@ -1214,6 +1217,11 @@ function PhaseCard({
           )}
         </View>
         {phase.agent && <Text style={styles.phaseAgent}>{phase.agent}</Text>}
+        {phase.model ? (
+          <Text style={styles.modelBadge} numberOfLines={1}>
+            ◇ {modelLabel(resolveModelName(phase.model) ?? phase.model)}
+          </Text>
+        ) : null}
         {phase.subflow && (
           <>
             <Text style={styles.phaseAgent}>subflow: {phase.subflow}</Text>
@@ -1703,7 +1711,6 @@ export function PhaseForm({
     initial?.continueOnError !== undefined ||
     initial?.halt ||
     initial?.when ||
-    initial?.model ||
     initial?.provider ||
     initial?.credential ||
     initial?.maxTurns !== undefined ||
@@ -1722,6 +1729,8 @@ export function PhaseForm({
   const [halt, setHalt] = useState(!!initial?.halt);
   const [whenExpr, setWhenExpr] = useState(initial?.when ?? '');
   const [model, setModel] = useState(initial?.model ?? '');
+  // What "Default" resolves to: the agent file's `model:`, else the run's.
+  const defaultModel = useDefaultModel(agent);
   const [provider, setProvider] = useState<string>(initial?.provider ?? '');
   const [credential, setCredential] = useState(initial?.credential ?? '');
   const [maxTurns, setMaxTurns] = useState(
@@ -2261,6 +2270,15 @@ export function PhaseForm({
         <Switch value={lock} onValueChange={setLock} />
       </View>
 
+      <Field label="Model">
+        <ModelPicker
+          value={model}
+          onChange={setModel}
+          defaultModel={defaultModel.model}
+          defaultSource={defaultModel.source}
+        />
+      </Field>
+
       {/* Advanced decorators — collapsed by default; expands inline
        *  when the disclosure is tapped. Auto-expands when editing a
        *  phase that already has any advanced field set so the user
@@ -2270,7 +2288,7 @@ export function PhaseForm({
         onPress={() => setAdvancedOpen(v => !v)}
         style={styles.advancedToggle}>
         <Text style={styles.advancedToggleText}>
-          {advancedOpen ? '▾' : '▸'} Advanced (retry, timeout, model, provider, …)
+          {advancedOpen ? '▾' : '▸'} Advanced (retry, timeout, provider, …)
         </Text>
       </Pressable>
       {advancedOpen && (
@@ -2311,16 +2329,6 @@ export function PhaseForm({
               value={whenExpr}
               onChangeText={setWhenExpr}
               placeholder="leave blank to always run"
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </Field>
-          <Field label="Model override (e.g. claude-opus-4-7)">
-            <TextInput
-              value={model}
-              onChangeText={setModel}
-              placeholder="leave blank to use run-wide default"
               style={styles.input}
               autoCapitalize="none"
               autoCorrect={false}
@@ -2548,6 +2556,17 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     fontWeight: '700',
     marginLeft: 4,
+  },
+  modelBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    backgroundColor: '#dbeafe',
+    color: '#1d4ed8',
+    fontSize: 10,
+    fontWeight: '700',
   },
   phaseAgent: {
     fontFamily: 'Menlo',

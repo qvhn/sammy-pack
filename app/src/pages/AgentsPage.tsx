@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ModelPicker } from '../ModelPicker';
+import { agentFileModel, withAgentFileModel } from '../llm/models';
 import {
   deleteAgent,
   listAgents,
@@ -176,7 +178,21 @@ export function AgentsPage() {
             </Pressable>
           </View>
         }>
-        <Text style={styles.path}>agents/{a.name}.md</Text>
+        <Text style={styles.path}>
+          agents/{a.name}.md
+          {agentFileModel(a.raw) ? ` · model: ${agentFileModel(a.raw)}` : ''}
+        </Text>
+        {isEditing && (
+          <View style={styles.modelField}>
+            <Text style={styles.modelLabel}>Model</Text>
+            <ModelPicker
+              value={agentFileModel(draft) ?? ''}
+              onChange={m => setEditing(prev => ({ ...prev, [a.name]: withAgentFileModel(draft, m || null) }))}
+              defaultModel={getModel()}
+              defaultSource="the run's model; a phase can still pick its own"
+            />
+          </View>
+        )}
         {isEditing && (
           <TextInput
             value={draft}
@@ -441,6 +457,8 @@ function GenerateAgentModal({
 }
 
 const styles = StyleSheet.create({
+  modelField: { gap: 4, marginTop: 8 },
+  modelLabel: { fontSize: 12, fontWeight: '600', color: '#374151' },
   code: {
     fontFamily: 'Menlo',
     fontSize: 11,

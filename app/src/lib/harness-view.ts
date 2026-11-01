@@ -21,6 +21,8 @@ export type HarnessStepView = {
   pass?: number;
   required: boolean;
   finally: boolean;
+  /** The model the step runs on, when not the session's. */
+  model?: string;
   status: 'pending' | 'active' | 'done' | 'skipped' | 'failed';
   /** Why a step was skipped or failed, and who decided. */
   reason?: string;

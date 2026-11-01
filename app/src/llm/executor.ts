@@ -35,6 +35,7 @@ import {
 } from './terminal-failure';
 import { callRemoteA2aAgent } from './a2a';
 import { mergeIterators } from './merge';
+import { agentFileModel, phaseModel, resolveModelName } from './models';
 import { decideLoopJudge, decideRoute } from './control-flow';
 import { streamFnFor, type ProviderRegistry } from './providers';
 import { agentSlots } from './concurrency';
@@ -108,6 +109,7 @@ import {
   type HarnessStep,
   type HarnessStepKind,
   type HarnessControl,
+  type HarnessSession,
   type HarnessStreamOptions,
   type HarnessToolSpec,
   type ResolvedFollow,
@@ -594,6 +596,8 @@ export type RunEvent =
         pass?: number;
         required: boolean;
         finally: boolean;
+        /** The model the step runs on, when not the session's. */
+        model?: string;
       }>;
       sessionId: string;
       /** The agent's working directory: `claude --resume` must run there. */
@@ -1776,9 +1780,11 @@ async function* runAgentPhase(
         continue;
       }
       const parsed = parseAgentBody(sub.raw);
+      const subModel = resolveModelName(agentFileModel(sub.raw));
       subagents[subName] = {
         description: parsed.description ?? `Subagent ${subName}`,
         prompt: parsed.systemPrompt,
+        ...(subModel ? { model: subModel } : {}),
       };
     }
     if (missingSubagents.length > 0) {
@@ -1897,7 +1903,14 @@ async function* runAgentPhase(
       };
     }
   }
-  const effectiveModel = node.model ?? ctx.model;
+  // The phase's own model → its agent file's `model:` (Claude-routed phases
+  // only) → the run's. See llm/models.ts.
+  const { model: effectiveModel } = phaseModel({
+    phaseModel: node.model,
+    agentRaw: agent.raw,
+    runModel: ctx.model,
+    claude: !node.provider || node.provider === 'anthropic' || node.provider === 'claude-code',
+  });
 
   /** Fold this dispatch's tokens into the run totals and return the delta.
    *  Called exactly once per dispatch on EVERY exit — the phase-end and each
@@ -5745,6 +5758,10 @@ async function* runHarness(
 
   const model = orchestration.harness?.model ?? ctx.model;
   const cwd = ctx.defaultCwd ?? opts.cwd;
+  // A step that names a model (its own `model`, or its agent file's) runs on
+  // it: the server's session switches for the step and back after. `current`
+  // is what the session runs on now — spend is priced by it.
+  const sessionModel: { current: string; live: HarnessSession | null } = { current: model, live: null };
 
   // ── Tools ──
   const declaredClaudeTools = (s: HarnessStep): string[] =>
@@ -5909,11 +5926,17 @@ async function* runHarness(
       cacheRead: Math.max(c.cacheRead, u.cacheReadTokens ?? 0),
       cacheWrite: Math.max(c.cacheWrite, u.cacheWriteTokens ?? 0),
     };
-    const usd = Math.max(
-      c.usd,
-      costUsd(model, cum.input, cum.output, { cacheReadTokens: cum.cacheRead, cacheWriteTokens: cum.cacheWrite }),
-    );
-    const d = { input: cum.input - c.input, output: cum.output - c.output, usd: usd - c.usd };
+    // Priced as it arrives, at the model the session is on now — a step on
+    // another model changes the price of what follows, not of what came before.
+    const d = {
+      input: cum.input - c.input,
+      output: cum.output - c.output,
+      usd: costUsd(sessionModel.current, cum.input - c.input, cum.output - c.output, {
+        cacheReadTokens: cum.cacheRead - c.cacheRead,
+        cacheWriteTokens: cum.cacheWrite - c.cacheWrite,
+      }),
+    };
+    const usd = c.usd + d.usd;
     spend.charged = { ...cum, usd };
     ctx.usage.totalInputTokens += d.input;
     ctx.usage.totalOutputTokens += d.output;
@@ -5972,7 +5995,7 @@ async function* runHarness(
         output: rec.output ?? '',
         ...takeStepSpend(),
         durationMs: Date.now() - (startedAt.get(s.key) ?? Date.now()),
-        model,
+        model: stepModel(s),
         ts: Date.now(),
       });
       if (applyAs(s.node, ctx)) queue.push({ type: 'state-set', key: s.node.as!, ts: Date.now() });
@@ -6044,6 +6067,34 @@ async function* runHarness(
     return `Pass ${pass} of "${loop.name}" is done, but ${why} — the engine opened pass ${next} of at most ${loop.max}.`;
   };
 
+  /** The model a step runs on: its own, its agent file's, or the session's. */
+  const stepModel = (s: HarnessStep): string =>
+    s.kind === 'engine'
+      ? model
+      : phaseModel({
+          phaseModel: s.node.model,
+          agentRaw: s.agentPath ? ctx.agentByPath.get(s.agentPath)?.raw : undefined,
+          runModel: model,
+        }).model;
+  /** Put the server's session on the model the moment needs: the active
+   *  step's, or the run's between steps. A terminal's session isn't ours to
+   *  switch — its brief says which model the step asks for. */
+  const syncModel = async (): Promise<void> => {
+    const live = sessionModel.live;
+    const want = progress.active ? stepModel(progress.active) : model;
+    if (!live || want === sessionModel.current) return;
+    try {
+      await live.setModel(want);
+      sessionModel.current = want;
+    } catch (e) {
+      queue.push({
+        type: 'harness-notice',
+        message: `Couldn't switch the session to ${want} (${(e as Error).message}); it stays on ${sessionModel.current}.`,
+        ts: Date.now(),
+      });
+    }
+  };
+
   /** The instructions start_step hands the agent. */
   const briefFor = (s: HarnessStep): string => {
     const input = ctx.lastOutput;
@@ -6071,6 +6122,14 @@ async function* runHarness(
       }
     }
     if (s.kind === 'skill') out.push(`### How\nRun the skill "${s.skill}" with the Skill tool to do this step.`);
+    const wants = stepModel(s);
+    if (wants !== model) {
+      out.push(
+        sessionModel.live
+          ? `### Model\nThis step runs on ${wants}; the session switches back to ${model} after it.`
+          : `### Model\nThis step asks for ${wants}. In a terminal, switch with \`/model ${wants}\` for it, and back to ${model} after.`,
+      );
+    }
     if (s.node.prompt !== undefined) {
       out.push(`### Task\n${resolveAgentInput(s.node, input, lookup, note)}`);
       if (input.trim()) out.push(`### Output of the previous step\n${clipForAgent(input, 8_000)}`);
@@ -6446,6 +6505,7 @@ async function* runHarness(
         ...(s.loop ? { loop: s.loop.name, loopMax: s.loop.max, pass: progress.passOf(s.loop.name) } : {}),
         required: s.required,
         finally: s.finally,
+        ...(stepModel(s) !== model ? { model: stepModel(s) } : {}),
       })),
       sessionId,
       ...(cwd ? { cwd } : {}),
@@ -6572,11 +6632,26 @@ async function* runHarness(
     let hitMaxTurns = false;
     let interruptedLeg = false;
     let legError: Error | null = null;
+    // Each leg's session starts on the model the moment needs: a terminal
+    // handing back mid-step leaves that step's model in force.
+    sessionModel.current = progress.active ? stepModel(progress.active) : model;
+    sessionModel.live = null;
     const harnessOpts: HarnessStreamOptions = {
-      tools,
+      // After each step tool, the session moves to the model the run now needs.
+      tools: tools.map(t => ({
+        ...t,
+        handler: async (args: Record<string, string | undefined>) => {
+          const reply = await t.handler(args);
+          await syncModel();
+          return reply;
+        },
+      })),
       ...(resumeSession ? { resume: sessionId } : { sessionId }),
       ...(skills.length > 0 ? { skills } : {}),
       toolGate,
+      onSession: session => {
+        sessionModel.live = session;
+      },
     };
     const system = buildHarnessSystemPrompt({ orchestration, progress, extra, approvedGates: gatesApproved() }) + PHASE_TURN_CONTRACT;
     const prompt = message;
@@ -6599,7 +6674,7 @@ async function* runHarness(
         try {
           for await (const ev of ctx.streamFn({
             apiKey: ctx.apiKey,
-            model,
+            model: sessionModel.current,
             system,
             messages: [{ role: 'user', content: prompt }],
             tools: [...sessionTools],
@@ -6695,6 +6770,7 @@ async function* runHarness(
       }
     } finally {
       legLive.v = false;
+      sessionModel.live = null;
       if (control) control.interruptLeg = null;
       slot.release?.();
       slot.release = null;
