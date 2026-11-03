@@ -270,6 +270,10 @@ export type RunEvent =
        *  Equal to phaseName for unscoped leaves. The run-controller stores
        *  leaf outputs under this key; display surfaces keep phaseName. */
       replayKey?: string;
+      /** This phase didn't run now: a resume or fork replayed the output it
+       *  produced before (no tokens, no cost). The Runs log shows the
+       *  original once rather than the same step twice. */
+      replayed?: true;
       ts: number;
     }
   | { type: 'phase-skipped'; phaseName: string; reason: string; ts: number }
@@ -1612,6 +1616,7 @@ async function* runAgentPhase(
       durationMs: Date.now() - startMs,
       model: ctx.model,
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -2493,6 +2498,7 @@ async function* runA2aPhase(
       durationMs: Date.now() - startMs,
       model: ctx.model,
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -2642,7 +2648,7 @@ async function* runWaitPhase(
     (ctx.replayScope === '' ? ctx.replayOutputs.get(node.name) : undefined);
   if (replayed !== undefined) {
     ctx.lastOutput = replayed;
-    yield endEvent(replayed);
+    yield { ...endEvent(replayed), replayed: true } as RunEvent;
     return;
   }
 
@@ -2985,6 +2991,7 @@ async function* runHttpPhase(
       durationMs: Date.now() - startMs,
       model: 'http',
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -3140,6 +3147,7 @@ async function* runCodePhase(
       durationMs: Date.now() - startMs,
       model: 'code',
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;

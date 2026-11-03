@@ -18,7 +18,7 @@ function proxyReplying(...events: unknown[]) {
 
 async function lastUsage() {
   let usage: unknown;
-  for await (const ev of streamClaudeCode({ model: 'claude-sonnet-4-6', system: 's', messages: [] })) {
+  for await (const ev of streamClaudeCode({ apiKey: '', model: 'claude-sonnet-4-6', system: 's', messages: [] })) {
     if (ev.type === 'done') usage = ev.usage;
   }
   return usage;

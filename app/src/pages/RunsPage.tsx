@@ -35,6 +35,7 @@ export function RunsPage() {
     hydrateRun,
     cancelRun,
     paused,
+    activeOnServer,
     pauseRun,
     resumeRun,
     sendChat,
@@ -415,6 +416,7 @@ export function RunsPage() {
                 onStop={() => cancelRunById(detailRun.id)}
                 isCancelling={isCancelling(detailRun.id)}
                 paused={paused}
+                onServer={resolvedSelectedId === ACTIVE_ID && activeOnServer}
                 onPause={pauseRun}
                 onResume={resumeRun}
                 onResumeServerRun={resumeServerRun}
@@ -625,6 +627,7 @@ function RunDetailCard({
   onStop,
   isCancelling,
   paused,
+  onServer,
   onPause,
   onResume,
   onResumeServerRun,
@@ -649,6 +652,9 @@ function RunDetailCard({
    *  server reaps the run. */
   isCancelling?: boolean;
   paused: boolean;
+  /** The run executes on the server. Pause and chat drive the in-browser
+   *  executor only, so they are hidden rather than shown doing nothing. */
+  onServer?: boolean;
   onPause: () => void;
   onResume: () => void;
   /** Resume a server-owned run that was snapshot+paused by a lock.
@@ -857,7 +863,7 @@ function RunDetailCard({
               </>
             ) : (
               <>
-                {paused ? (
+                {onServer ? null : paused ? (
                   <Pressable onPress={onResume} style={styles.resumeButton}>
                     <Text style={styles.resumeButtonText}>▶ Resume</Text>
                   </Pressable>
@@ -934,7 +940,7 @@ function RunDetailCard({
       />
       <ArtifactList run={run} />
       <BlockList events={run.events} version={run.eventVersion} />
-      {isActive && activePhase && !isProgramPhase(phaseAgentPath(run.events, activePhase)) && (
+      {isActive && !onServer && activePhase && !isProgramPhase(phaseAgentPath(run.events, activePhase)) && (
         <ChatInput phaseName={activePhase} paused={paused} onSend={onChat} />
       )}
     </Card>
@@ -1493,7 +1499,7 @@ function ChatInput({
 
 // -------- Block grouping --------
 
-type Block = { ts?: number } & (
+export type Block = { ts?: number } & (
   | {
       kind: 'meta';
       tone: BlockTone;
@@ -1512,7 +1518,9 @@ type Block = { ts?: number } & (
       kind: 'phase';
       name: string;
       agentPath?: string;
-      status: 'running' | 'done' | 'skipped' | 'error';
+      /** `stopped`: the run ended, or restarted on a resume, while this
+       *  phase was still open — it will never finish in this attempt. */
+      status: 'running' | 'done' | 'skipped' | 'error' | 'stopped';
       text: string;
       reason?: string;
       error?: string;
@@ -1520,12 +1528,14 @@ type Block = { ts?: number } & (
       outputTokens?: number;
       costUsd?: number;
       durationMs?: number;
+      /** Not run now — a fork replayed its earlier output. */
+      replayed?: boolean;
     }
 );
 
 type BlockTone = 'dim' | 'info' | 'ok' | 'warn' | 'err';
 
-function groupEvents(events: RunEvent[]): Block[] {
+export function groupEvents(events: RunEvent[]): Block[] {
   const blocks: Block[] = [];
 
   function findOpenPhase(name: string): Block | undefined {
@@ -1536,20 +1546,32 @@ function groupEvents(events: RunEvent[]): Block[] {
     return undefined;
   }
 
+  /** A phase still open when its run ends, or when a resume starts the run
+   *  again, will never finish in that attempt — stop showing it streaming. */
+  function closeOpenPhases() {
+    for (const b of blocks) {
+      if (b.kind === 'phase' && b.status === 'running') b.status = 'stopped';
+    }
+  }
+
   for (const e of events) {
     const before = blocks.length;
     const ets = (e as { ts?: number }).ts;
     switch (e.type) {
       case 'run-start':
+        closeOpenPhases();
         blocks.push({ kind: 'meta', tone: 'dim', text: '▶ run started' });
         break;
       case 'run-end':
+        closeOpenPhases();
         blocks.push({ kind: 'meta', tone: 'ok', text: '■ run complete' });
         break;
       case 'run-error':
+        closeOpenPhases();
         blocks.push({ kind: 'meta', tone: 'err', text: `✗ run error: ${e.error}` });
         break;
       case 'run-cancelled':
+        closeOpenPhases();
         blocks.push({ kind: 'meta', tone: 'warn', text: '⊘ run cancelled' });
         break;
       case 'composite-start':
@@ -1577,6 +1599,20 @@ function groupEvents(events: RunEvent[]): Block[] {
       }
       case 'phase-end': {
         const open = findOpenPhase(e.phaseName);
+        if (open && open.kind === 'phase' && e.replayed) {
+          // A resume replays the steps it already finished. When this log
+          // already shows the step run for real, drop the replay rather
+          // than list the step twice; a fork's log has no original, so
+          // there the step stays, marked as replayed.
+          const shown = blocks.some(
+            b => b !== open && b.kind === 'phase' && b.name === e.phaseName && b.status === 'done' && !b.replayed,
+          );
+          if (shown) {
+            blocks.splice(blocks.indexOf(open), 1);
+            break;
+          }
+          open.replayed = true;
+        }
         if (open && open.kind === 'phase') {
           open.status = 'done';
           open.text = e.output;
@@ -2027,7 +2063,9 @@ function PhaseBlock({
         ? 'warn'
         : block.status === 'done'
           ? 'ok'
-          : 'info';
+          : block.status === 'stopped'
+            ? 'dim'
+            : 'info';
   const statusIcon =
     block.status === 'running'
       ? '▸'
@@ -2035,14 +2073,20 @@ function PhaseBlock({
         ? '✓'
         : block.status === 'skipped'
           ? '⊘'
-          : '✗';
+          : block.status === 'stopped'
+            ? '◌'
+            : '✗';
   return (
     <View style={[styles.row, styles[`row_${tone}`]]}>
       <View style={styles.rowHeader}>
         <Text style={styles.rowText}>
           {statusIcon} {block.name}
           {block.agentPath && <Text style={styles.rowMeta}> · {block.agentPath}</Text>}
-          {block.status === 'done' && (
+          {block.status === 'stopped' && <Text style={styles.rowMeta}> · stopped</Text>}
+          {block.status === 'done' && block.replayed && (
+            <Text style={styles.rowMeta}> · replayed from the earlier run</Text>
+          )}
+          {block.status === 'done' && !block.replayed && (
             <Text style={styles.rowMeta}>
               {!isProgramPhase(block.agentPath) &&
                 ` · ${block.inputTokens ?? 0}t in / ${block.outputTokens ?? 0}t out`}

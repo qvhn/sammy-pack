@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type ViewStyle,
 } from 'react-native';
 import {
   deleteOrchestration,
@@ -4740,6 +4742,15 @@ function uniqueName(base: string, existing: Set<string>): string {
   return `${slug}-${i}`;
 }
 
+/** A transparent layer under a pop-up menu that closes it on a click
+ *  anywhere else. On web it is pinned to the viewport: an absolute layer
+ *  oversized to cover the screen widened the page to ~3,400px, so opening a
+ *  menu let the whole page scroll sideways. */
+const TAP_OUTSIDE: ViewStyle =
+  Platform.OS === 'web'
+    ? { position: 'fixed' as ViewStyle['position'], top: 0, left: 0, right: 0, bottom: 0 }
+    : { position: 'absolute', top: -2000, left: -2000, right: -2000, bottom: -2000 };
+
 const styles = StyleSheet.create({
   // minHeight:0 lets the inner scroll areas bound themselves to the viewport
   // instead of growing the whole document (which caused a blank scroll region
@@ -5062,11 +5073,7 @@ const styles = StyleSheet.create({
   },
   newButtonText: { fontSize: 12, color: '#ffffff', fontWeight: '700' },
   newMenuBackdrop: {
-    position: 'absolute',
-    top: -2000,
-    left: -2000,
-    right: -2000,
-    bottom: -2000,
+    ...TAP_OUTSIDE,
     backgroundColor: 'transparent',
   },
   newMenu: {
@@ -5177,11 +5184,7 @@ const styles = StyleSheet.create({
   overflowBackdrop: {
     // Covers the viewport so a click anywhere outside the menu
     // dismisses it. Z-order is below the menu itself.
-    position: 'absolute',
-    top: -1000,
-    left: -2000,
-    right: -2000,
-    bottom: -1000,
+    ...TAP_OUTSIDE,
     backgroundColor: 'transparent',
   },
   overflowMenu: {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from './src/safe-area';
 import { CommandPalette } from './src/CommandPalette';
+import { PageErrorBoundary } from './src/PageErrorBoundary';
 import { Sidebar, type PageId } from './src/Sidebar';
 import { AgentsPage } from './src/pages/AgentsPage';
 import { ConnectionsPage } from './src/pages/ConnectionsPage';
@@ -70,7 +71,11 @@ function AppContent() {
   return (
     <View style={[styles.shell, { paddingTop: insets.top }]}>
       <Sidebar active={page} onChange={navigate} />
-      <View style={styles.main}>{renderPage(page, navigate)}</View>
+      <View style={styles.main}>
+        <PageErrorBoundary key={page} page={page}>
+          {renderPage(page, navigate)}
+        </PageErrorBoundary>
+      </View>
       <CommandPalette onNavigate={navigate} />
     </View>
   );

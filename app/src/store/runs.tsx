@@ -191,6 +191,10 @@ type Ctx = {
    *  and is waiting between exchanges). UI surfaces this as a Pause /
    *  Resume button toggle. */
   paused: boolean;
+  /** The active run is executing on the server (streamed over SSE), not in
+   *  this browser. Pause and chat only reach the in-browser executor, so the
+   *  Runs page hides them for a server run. */
+  activeOnServer: boolean;
   pauseRun: () => void;
   resumeRun: () => void;
   /** Inject a user message into the named phase's conversation. Takes
@@ -724,6 +728,9 @@ export function RunsProvider({ children }: { children: ReactNode }) {
       // re-create only the wrapper Run object on each event (cheap O(1))
       // and bump eventVersion so React sees a new reference. Drops
       // memory churn from O(N²) (full clone per event) to O(N) total.
+      // This run executes here, not on the server: forget the last server
+      // run so Cancel and the Pause/chat controls address this one.
+      serverRunIdRef.current = null;
       const eventsArr: RunEvent[] = [];
       let run: Run = {
         id: `run-${Date.now()}`,
@@ -1449,6 +1456,7 @@ export function RunsProvider({ children }: { children: ReactNode }) {
       ackedIds,
       acknowledgeNotifications,
       paused,
+      activeOnServer: !!active && active.id === serverRunIdRef.current,
       pauseRun,
       resumeRun,
       sendChat,

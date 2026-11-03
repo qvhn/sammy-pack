@@ -1582,6 +1582,10 @@ describe('executor — pause / resume primitives', () => {
     if (replayedEnd?.type !== 'phase-end') throw new Error();
     expect(replayedEnd.output).toBe('from snapshot');
     expect(replayedEnd.inputTokens).toBe(0);
+    // Marked, so the Runs log can show the step once rather than twice.
+    expect(replayedEnd.replayed).toBe(true);
+    const liveEnd = ends.find(e => e.type === 'phase-end' && e.phaseName === 'live');
+    expect(liveEnd?.type === 'phase-end' && liveEnd.replayed).toBeFalsy();
   });
 
   test('autoApproveLocks bypasses waitForApproval for the named phase', async () => {
