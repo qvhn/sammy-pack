@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   deleteEval,
@@ -275,6 +275,9 @@ export function EvalsPage() {
     }
   }
 
+  /** Set by Stop: the row in flight is cancelled and no further rows run. */
+  const stopRef = useRef({ v: false });
+
   async function runEval() {
     if (!draft) return;
     setError(null);
@@ -309,12 +312,15 @@ export function EvalsPage() {
 
     const results: RowResult[] = [];
     setRunState({ status: 'running', current: 0, total: rows.length, results });
+    const stop = { v: false };
+    stopRef.current = stop;
 
     for (let i = 0; i < rows.length; i++) {
+      if (stop.v) break;
       const row = rows[i];
       setRunState({ status: 'running', current: i + 1, total: rows.length, results: [...results] });
       const startMs = Date.now();
-      const cancelled = { v: false };
+      const cancelled = stop;
       let lastOutput = '';
       let runError: string | undefined;
       try {
@@ -336,6 +342,8 @@ export function EvalsPage() {
       } catch (err) {
         runError = (err as Error).message;
       }
+      // Stopped mid-row: that row didn't finish, so it isn't scored.
+      if (stop.v) break;
       const scores = scoreDeterministic(lastOutput, row.expectedOutput, draft.scorers);
       // LLM-judge scorers need an extra round-trip — run them all in
       // parallel after the main orchestration completes. Failures
@@ -364,6 +372,10 @@ export function EvalsPage() {
     }
     setRunState({ status: 'done', results, ranAt: Date.now() });
     const passed = results.filter(r => r.pass).length;
+    if (stop.v) {
+      toast.show(`Eval stopped after ${results.length} of ${rows.length} rows · ${passed} passed`, 'info');
+      return;
+    }
     toast.show(
       `Eval done · ${passed}/${results.length} passed`,
       passed === results.length ? 'success' : 'info',
@@ -479,6 +491,17 @@ export function EvalsPage() {
                         : '▶ Run'}
                     </Text>
                   </Pressable>
+                  {runState.status === 'running' && (
+                    <Pressable
+                      onPress={() => {
+                        stopRef.current.v = true;
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Stop the eval"
+                      style={styles.deleteBtn}>
+                      <Text style={styles.deleteBtnText}>■ Stop</Text>
+                    </Pressable>
+                  )}
                   <Pressable
                     onPress={save}
                     disabled={!dirty}
