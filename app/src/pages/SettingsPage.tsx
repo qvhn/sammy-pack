@@ -329,20 +329,17 @@ export function SettingsPage() {
       <CollapsibleSection title="Backup (prefs only)" hint="Export / import preferences">
       <Card
         title="Export / import preferences"
-        subtitle="Round-trip sammy.* localStorage entries (theme, default model, MCP/hooks/budget caps, workspace, user id). For credentials, use Connections → Export / Import all.">
+        subtitle="Round-trip sammy.* localStorage entries (default model, MCP/hooks/budget caps, workspace, user id). For credentials, use Connections → Export / Import all.">
         <BackupPanel />
       </Card>
       </CollapsibleSection>
 
       <CollapsibleSection title="App" defaultOpen>
-      <Card title="Theme">
-        <Hint>Light / dark / system. Defaults to system.</Hint>
-      </Card>
       <Card title="Workspace root">
         <Hint>
-          When running locally via the Vite dev middleware, the repo root is auto-detected.
-          For production web + native, you'll pick a workspace via the Connections + Workspaces
-          configuration.
+          The server reads pipelines and agents from its repo: SAMMY_REPO_ROOT, or the folder
+          it was started in. To read them from a GitHub repo instead, add one on the Workspaces
+          page.
         </Hint>
       </Card>
       </CollapsibleSection>
@@ -496,7 +493,7 @@ function BackupPanel() {
       <Hint>
         <Text style={{ fontWeight: '700' }}>Prefs only.</Text> Round-trips
         the <Text style={{ fontWeight: '700' }}>{count}</Text> sammy.*
-        localStorage entries (theme, default model, MCP/hooks/budget caps,
+        localStorage entries (default model, MCP/hooks/budget caps,
         active workspace, user id, etc.). For credentials (API keys,
         connection tokens), use{' '}
         <ConnectionsLink label="Connections → Export / Import all" />

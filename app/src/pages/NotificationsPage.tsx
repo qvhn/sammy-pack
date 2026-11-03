@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRuns, type Run } from '../store/runs';
 import type { RunStatus } from '../store/runs';
 import { requestRun } from '../store/runSelection';
+import { useToast } from '../store/toast';
 import type { PageId } from '../Sidebar';
 import { Card, Hint, Page } from './Page';
 
@@ -62,6 +63,7 @@ export function NotificationsPage({
     isCancelling,
     startServerRun,
   } = useRuns();
+  const toast = useToast();
 
   // Toggle a single status filter from the summary cards, plus a free-text
   // search over orchestration names — together these keep a 100+ flat feed
@@ -215,7 +217,18 @@ export function NotificationsPage({
           isCancelling={isCancelling(n.id)}
           onRerun={
             n.orchestrationSnapshot
-              ? () => startServerRun(n.orchestrationSnapshot!, n.initialInput)
+              ? () => {
+                  // A refused start used to do nothing visible here (the
+                  // reason only showed on the Pipelines page).
+                  if (startServerRun(n.orchestrationSnapshot!, n.initialInput)) {
+                    toast.show(`Re-running "${n.orchestrationName}"`, 'success');
+                  } else {
+                    toast.show(
+                      'Re-run needs Claude Code login — switch in Settings → LLM Provider.',
+                      'error',
+                    );
+                  }
+                }
               : undefined
           }
           onView={

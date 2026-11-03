@@ -105,8 +105,8 @@ export function WorkspacesPage() {
       subtitle="pointers to where your data lives (which repo, branch, paths)">
       <Hint>
         Workspaces are JSON files in <Text style={styles.code}>context/</Text>. Each
-        one describes a data source agents may read from. Activate a workspace to
-        load orchestrations and agents from it instead of the local dev workspace.
+        one describes a data source agents may read from. Activate a GitHub workspace
+        to load orchestrations and agents from it instead of the local dev workspace.
         Combined with a Connection (which holds the auth), they give an agent the
         location AND access it needs.
       </Hint>
@@ -122,7 +122,7 @@ export function WorkspacesPage() {
         subtitle={
           active
             ? `${active.connection} · ${active.repo}@${active.ref ?? 'default'}`
-            : 'Reading directly from this repo via the Vite dev middleware.'
+            : "Reading directly from the server's repo."
         }
         right={
           active && (
@@ -179,6 +179,10 @@ export function WorkspacesPage() {
         const needsAuth =
           w.connection !== 'local' &&
           !hasConnection(w.connection as ConnectionType);
+        // Pipelines and agents load only from a GitHub workspace today
+        // (api.ts); activating any other kind left Pipelines and Agents
+        // failing with "not yet implemented".
+        const loadable = w.connection === 'github';
         const editDraft = editing[w.name];
         return (
           <Card
@@ -193,15 +197,15 @@ export function WorkspacesPage() {
                   ) : (
                     <Pressable
                       onPress={() => activate(w)}
-                      disabled={needsAuth}
+                      disabled={needsAuth || !loadable}
                       accessibilityRole="button"
                       accessibilityLabel={`Activate workspace ${w.name}`}
                       style={[
                         styles.activateButton,
-                        needsAuth && styles.activateDisabled,
+                        (needsAuth || !loadable) && styles.activateDisabled,
                       ]}>
                       <Text style={styles.activateButtonText}>
-                        {needsAuth ? 'needs token' : 'Activate'}
+                        {!loadable ? 'GitHub only' : needsAuth ? 'needs token' : 'Activate'}
                       </Text>
                     </Pressable>
                   ))}
