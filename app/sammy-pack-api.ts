@@ -77,7 +77,7 @@ import {
   type PreviewNode,
 } from './src/llm/preview';
 import { renderPlanText } from './src/llm/preview-render';
-import { foldSpend, isSpendEvent } from './src/lib/spend';
+import { foldSpend, inputTokensOf, isSpendEvent } from './src/lib/spend';
 import { computeDivergence } from './src/server/divergence';
 import { computeRunNotes } from './src/server/run-notes';
 import {
@@ -11223,7 +11223,7 @@ export async function mountSammyApi(
                 };
                 p.runs += 1;
                 if (e.durationMs != null) p.durationsMs.push(e.durationMs);
-                p.inputTokens += e.inputTokens ?? 0;
+                p.inputTokens += inputTokensOf(e);
                 p.outputTokens += e.outputTokens ?? 0;
                 p.costUsd += e.costUsd ?? 0;
                 phaseMap.set(key, p);
@@ -11244,7 +11244,7 @@ export async function mountSammyApi(
                 // and the run-level totals in this same response charge it.
                 // Counting it in `errors` but not in `costUsd` made the
                 // per-phase column fail to add up to the totals beside it.
-                p.inputTokens += e.inputTokens ?? 0;
+                p.inputTokens += inputTokensOf(e);
                 p.outputTokens += e.outputTokens ?? 0;
                 p.costUsd += e.costUsd ?? 0;
                 phaseMap.set(key, p);
@@ -11477,7 +11477,7 @@ export async function mountSammyApi(
                 phaseRows.push({
                   phaseName: e.phaseName,
                   agentPath: agentPathByPhase.get(e.phaseName),
-                  inputTokens: e.inputTokens ?? 0,
+                  inputTokens: inputTokensOf(e),
                   outputTokens: e.outputTokens ?? 0,
                   costUsd: e.costUsd ?? 0,
                   durationMs: e.durationMs,

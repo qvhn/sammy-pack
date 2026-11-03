@@ -18,6 +18,12 @@
  * `StoredEvent`, the browser store walks `RunEvent`, and the structural
  * shape below is the intersection both satisfy.
  *
+ * Input tokens count everything the model read: uncached input plus cache
+ * reads and cache writes. An agent session re-reads a long system prompt
+ * from cache every turn, so uncached input alone showed "3t in" for a call
+ * that read thousands. Budgets and caps keep their own counts; this is what
+ * the pages show.
+ *
  * A missing figure counts as 0 rather than propagating: the repo's own CLI
  * (`sammy-cli run-phase <id> <phase> end`) mirrors a run with a `phase-end`
  * that carries no token fields, and the validator deliberately permits it —
@@ -31,6 +37,8 @@
 export type SpendEvent = {
   type?: string;
   inputTokens?: unknown;
+  cacheReadTokens?: unknown;
+  cacheWriteTokens?: unknown;
   outputTokens?: unknown;
   costUsd?: unknown;
 };
@@ -56,12 +64,18 @@ function figure(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+/** All the input one event reports — uncached, cache reads and cache
+ *  writes. */
+export function inputTokensOf(e: SpendEvent): number {
+  return figure(e.inputTokens) + figure(e.cacheReadTokens) + figure(e.cacheWriteTokens);
+}
+
 /** Fold one event into a running total, in place. A no-op for every event
  *  that carries no spend, so a caller can pass its whole stream through a
  *  single loop it is already walking for other reasons. */
 export function addSpend(into: SpendTotals, e: SpendEvent): void {
   if (!isSpendEvent(e)) return;
-  into.inputTokens += figure(e.inputTokens);
+  into.inputTokens += inputTokensOf(e);
   into.outputTokens += figure(e.outputTokens);
   into.costUsd += figure(e.costUsd);
 }

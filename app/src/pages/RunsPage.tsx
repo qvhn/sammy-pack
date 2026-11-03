@@ -14,6 +14,7 @@ import {
 import { Markdown } from '../Markdown';
 import type { CompositeKind, RunEvent } from '../llm/executor';
 import { isProgramPhase, phaseAgentPath } from './phaseKind';
+import { inputTokensOf } from '../lib/spend';
 import { totalUsage, useRuns, type Run } from '../store/runs';
 import { takeRequestedRun } from '../store/runSelection';
 import { useToast } from '../store/toast';
@@ -109,14 +110,8 @@ export function RunsPage() {
     [toast],
   );
 
-  // Whenever a history run is selected (or auto-selected by default),
-  // ask the store to fetch its full event stream from disk. No-op for
-  // already-hydrated runs and for the active run.
-  useEffect(() => {
-    if (!selectedId || selectedId === ACTIVE_ID) return;
-    hydrateRun(selectedId);
-  }, [selectedId, hydrateRun]);
-  // Same for the compare target.
+  // Fetch the compare target's full event stream too. (The shown run is
+  // hydrated below, once the default selection has been resolved.)
   useEffect(() => {
     if (!compareId || compareId === ACTIVE_ID) return;
     hydrateRun(compareId);
@@ -139,6 +134,16 @@ export function RunsPage() {
     if (active) return ACTIVE_ID;
     return history[0]?.id ?? null;
   }, [selectedId, active, history]);
+
+  // Whenever a history run is shown — clicked, or picked by default above —
+  // ask the store to fetch its full event stream from disk. Keyed on the
+  // resolved id: keyed on `selectedId`, the default pick (null) was never
+  // fetched and showed "(starting…)" until clicked. No-op for
+  // already-hydrated runs and for the active run.
+  useEffect(() => {
+    if (!resolvedSelectedId || resolvedSelectedId === ACTIVE_ID) return;
+    hydrateRun(resolvedSelectedId);
+  }, [resolvedSelectedId, hydrateRun]);
 
   // Build the sidebar list — active pinned at top, history below.
   // Search + status filter both narrow the list; the active run is
@@ -1575,7 +1580,7 @@ function groupEvents(events: RunEvent[]): Block[] {
         if (open && open.kind === 'phase') {
           open.status = 'done';
           open.text = e.output;
-          open.inputTokens = e.inputTokens;
+          open.inputTokens = inputTokensOf(e);
           open.outputTokens = e.outputTokens;
           open.costUsd = e.costUsd;
           open.durationMs = e.durationMs;
