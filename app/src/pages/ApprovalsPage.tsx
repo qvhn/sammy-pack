@@ -1008,25 +1008,19 @@ export function ApprovalsPage({
       }
       // One gate POST per run at a time (a repeated ⌘/Ctrl+Enter would 409).
       if (!beginFlight(run.id)) return;
-      // Baseline the reviewed phase's revision count from the AUTHORITATIVE
-      // run (not the possibly-stale list snapshot) so we can detect a
-      // genuinely-new revision once it re-pauses. Counts phase-end events
-      // for the reviewed phase directly — robust even if planPhase wasn't
-      // derivable from the list payload.
-      const countAgentTurns = (events: RunEvent[]): number => {
-        const g = extractGate(events, run.gatedPhase);
-        if (!g?.planPhase) return 0;
-        return buildThread(events, g.planPhase).filter(t => t.kind === 'agent')
-          .length;
-      };
-      let priorAgentTurns = run.planPhase
-        ? buildThread(run.events, run.planPhase).filter(t => t.kind === 'agent')
-            .length
-        : 0;
+      // Baseline how many times the run has paused, from the AUTHORITATIVE
+      // run (not the possibly-stale list snapshot), so we can tell the
+      // revision has landed: the run pauses again at the gate. Counting
+      // pauses rather than the reviewed phase's agent turns — a gate after a
+      // code step re-pauses with no agent turn at all, which left the card
+      // on "Revising…" until the 10-minute timeout.
+      const countPauses = (events: RunEvent[]): number =>
+        events.filter(e => e.type === 'run-paused').length;
+      let priorPauses = countPauses(run.events);
       try {
         const base = await getRun<{ events?: RunEvent[] }>(run.id);
         if (Array.isArray(base.events)) {
-          priorAgentTurns = countAgentTurns(base.events);
+          priorPauses = countPauses(base.events);
         }
       } catch {
         // Fall back to the list-derived baseline.
@@ -1074,9 +1068,8 @@ export function ApprovalsPage({
           const status = full.status;
           if (status === 'paused') {
             const events = Array.isArray(full.events) ? full.events : [];
-            // Re-paused AND a fresh revision landed (one more agent turn for
-            // the reviewed phase than before we sent the feedback).
-            if (countAgentTurns(events) > priorAgentTurns) {
+            // Re-paused since we sent the feedback: the revision landed.
+            if (countPauses(events) > priorPauses) {
               repaused = true;
               break;
             }

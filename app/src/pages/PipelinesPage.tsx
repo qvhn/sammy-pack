@@ -86,7 +86,14 @@ import {
 } from '../defaultPipelines';
 
 type ViewMode = 'pipeline' | 'graph' | 'tree';
-type Status = 'idle' | 'loading' | 'saving' | 'error';
+type Status = 'idle' | 'loading' | 'saving' | 'error' | 'unsaved';
+
+/** A pipeline with no steps yet — what "Create blank" makes. The server
+ *  refuses to save one (a pipeline needs at least one phase), so it stays
+ *  unsaved until its first phase is added. */
+function hasNoPhases(n: Node): boolean {
+  return Array.isArray(n.phases) && n.phases.length === 0;
+}
 
 /** A spinning ⟳ + status word shown next to the orchestration that's
  *  currently running in the sidebar list — so a run is visible from the
@@ -669,6 +676,10 @@ export function PipelinesPage({
   }
 
   async function persist(next: Node) {
+    if (hasNoPhases(next)) {
+      setStatus('unsaved');
+      return next;
+    }
     setStatus('saving');
     try {
       const saved = await saveOrchestration(next);
@@ -977,7 +988,11 @@ async function handleDuplicate() {
 
   const validationErrors = useMemo<ValidationError[]>(() => {
     if (!active) return [];
-    const schemaErrors = validateOrchestration(active);
+    // An empty new pipeline isn't an error yet — the canvas already says to
+    // add a phase, and the header that it isn't saved.
+    const schemaErrors = validateOrchestration(active).filter(
+      e => !(hasNoPhases(active) && e.message === 'phases must be a non-empty array'),
+    );
     const agentWarnings = knownAgentPaths.size > 0
       ? validateAgentExistence(active, knownAgentPaths)
       : [];
@@ -4404,6 +4419,9 @@ function PageHeader({
         {status === 'idle' && (
           <Text style={styles.statusIdle}>synced to disk</Text>
         )}
+        {status === 'unsaved' && (
+          <Text style={styles.statusUnsaved}>not saved yet — add a phase to save</Text>
+        )}
         {status === 'error' && (
           <Text style={styles.statusError}>
             error{errorMsg ? `: ${errorMsg}` : ''}
@@ -4746,6 +4764,7 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center' },
   statusSaving: { fontSize: 11, color: '#2563eb' },
   statusIdle: { fontSize: 11, color: '#059669' },
+  statusUnsaved: { fontSize: 11, color: '#b45309' },
   statusError: { fontSize: 11, color: '#dc2626', maxWidth: 400 },
 
   chipStripScroll: { flexGrow: 0 },
