@@ -37,6 +37,7 @@ import { FOLLOW_HELP, getHarnessSettings, saveHarnessSettings } from '../store/h
 import { followLabel, HARNESS_FOLLOWS } from '../llm/harness';
 import type { HarnessFollow } from '../types';
 import { TOKEN_KEY, USER_KEY } from '../../web/api-auth';
+import { ModelPicker } from '../ModelPicker';
 import { Card, Hint, Page } from './Page';
 import { navigateTo } from '../lib/hashRoute';
 
@@ -121,7 +122,9 @@ function CollapsibleSection({
 }
 
 export function SettingsPage() {
-  const [model, setModelLocal] = useState(DEFAULT_MODEL);
+  // Read on first render, not only in the effect below: the model picker
+  // decides once, on mount, whether the value is a listed model or "Other".
+  const [model, setModelLocal] = useState(getModel);
   const [authMode, setAuthModeLocal] = useState<AuthMode>('direct-api-key');
   const [allowTools, setAllowToolsLocal] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -204,15 +207,14 @@ export function SettingsPage() {
         </View>
         <View style={styles.field}>
           <Text style={styles.label}>Default model</Text>
-          <TextInput
-            value={model}
-            onChangeText={setModelLocal}
-            placeholder={DEFAULT_MODEL}
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
+          {/* The same picker the phase and agent forms use; "Default" here is
+              the built-in model. A phase or agent file can still pick its own. */}
+          <ModelPicker
+            value={model === DEFAULT_MODEL ? '' : model}
+            onChange={next => setModelLocal(next || DEFAULT_MODEL)}
+            defaultModel={DEFAULT_MODEL}
+            defaultSource="built in"
           />
-          <Hint>e.g. claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001</Hint>
         </View>
         <View style={styles.buttonRow}>
           <Pressable
@@ -327,20 +329,17 @@ export function SettingsPage() {
       <CollapsibleSection title="Backup (prefs only)" hint="Export / import preferences">
       <Card
         title="Export / import preferences"
-        subtitle="Round-trip sammy.* localStorage entries (theme, default model, MCP/hooks/budget caps, workspace, user id). For credentials, use Connections → Export / Import all.">
+        subtitle="Round-trip sammy.* localStorage entries (default model, MCP/hooks/budget caps, workspace, user id). For credentials, use Connections → Export / Import all.">
         <BackupPanel />
       </Card>
       </CollapsibleSection>
 
       <CollapsibleSection title="App" defaultOpen>
-      <Card title="Theme">
-        <Hint>Light / dark / system. Defaults to system.</Hint>
-      </Card>
       <Card title="Workspace root">
         <Hint>
-          When running locally via the Vite dev middleware, the repo root is auto-detected.
-          For production web + native, you'll pick a workspace via the Connections + Workspaces
-          configuration.
+          The server reads pipelines and agents from its repo: SAMMY_REPO_ROOT, or the folder
+          it was started in. To read them from a GitHub repo instead, add one on the Workspaces
+          page.
         </Hint>
       </Card>
       </CollapsibleSection>
@@ -494,7 +493,7 @@ function BackupPanel() {
       <Hint>
         <Text style={{ fontWeight: '700' }}>Prefs only.</Text> Round-trips
         the <Text style={{ fontWeight: '700' }}>{count}</Text> sammy.*
-        localStorage entries (theme, default model, MCP/hooks/budget caps,
+        localStorage entries (default model, MCP/hooks/budget caps,
         active workspace, user id, etc.). For credentials (API keys,
         connection tokens), use{' '}
         <ConnectionsLink label="Connections → Export / Import all" />

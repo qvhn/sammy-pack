@@ -2486,7 +2486,7 @@ function GraphInner({
             nodes: ids.map(id => ({ id })),
           });
         } else {
-          reactFlow.fitView({ duration: 250, padding: 0.2 });
+          reactFlow.fitView({ duration: 250, padding: 0.2, maxZoom: 1 });
         }
         e.preventDefault();
         return;
@@ -3163,7 +3163,9 @@ function GraphInner({
             }
           }}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          // maxZoom 1: fitting a one- or two-node graph otherwise zooms in
+          // until a single node fills the canvas.
+          fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
           snapToGrid
           snapGrid={[20, 20]}
           // A click with sub-pixel jitter must not register as a drag (which

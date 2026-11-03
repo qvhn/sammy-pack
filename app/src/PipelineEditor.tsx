@@ -1611,6 +1611,10 @@ export function PhaseForm({
   }
   const originalKind = deriveInitialKind(initial);
   const [bodyKind, setBodyKind] = useState<BodyKind>(originalKind);
+  // Only an agent step reads its own `model`. Code, subflow and the
+  // containers call no model, and the agents a multi-agent, converge,
+  // conversation or route step runs don't inherit the step's `model`.
+  const usesModel = bodyKind === 'agent';
   const [codeSource, setCodeSource] = useState(initial?.code?.source ?? '');
   const [subflow, setSubflow] = useState(initial?.subflow ?? '');
   const [agentsCsv, setAgentsCsv] = useState(
@@ -1937,7 +1941,7 @@ export function PhaseForm({
     if (continueOnError) next.continueOnError = true;
     if (halt) next.halt = true;
     if (whenExpr.trim()) next.when = whenExpr.trim();
-    if (model.trim()) next.model = model.trim();
+    if (usesModel && model.trim()) next.model = model.trim();
     if (
       provider === 'anthropic' ||
       provider === 'openai' ||
@@ -2270,14 +2274,16 @@ export function PhaseForm({
         <Switch value={lock} onValueChange={setLock} />
       </View>
 
-      <Field label="Model">
-        <ModelPicker
-          value={model}
-          onChange={setModel}
-          defaultModel={defaultModel.model}
-          defaultSource={defaultModel.source}
-        />
-      </Field>
+      {usesModel && (
+        <Field label="Model">
+          <ModelPicker
+            value={model}
+            onChange={setModel}
+            defaultModel={defaultModel.model}
+            defaultSource={defaultModel.source}
+          />
+        </Field>
+      )}
 
       {/* Advanced decorators — collapsed by default; expands inline
        *  when the disclosure is tapped. Auto-expands when editing a

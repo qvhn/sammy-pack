@@ -146,6 +146,11 @@ export async function* streamClaudeCode({
         const u = (e as { usage?: Partial<Usage> }).usage ?? {};
         usage.inputTokens = u.inputTokens ?? 0;
         usage.outputTokens = u.outputTokens ?? 0;
+        // Cached input too: a Claude Code session reads most of its prompt
+        // from cache, and dropping these under-priced the call and showed
+        // a few tokens of input.
+        if (u.cacheReadTokens !== undefined) usage.cacheReadTokens = u.cacheReadTokens;
+        if (u.cacheWriteTokens !== undefined) usage.cacheWriteTokens = u.cacheWriteTokens;
       } else if (e.type === 'error') {
         throw new Error(
           `Claude Code proxy error: ${(e as { error?: string }).error ?? 'unknown'}`,

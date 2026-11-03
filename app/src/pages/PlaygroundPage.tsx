@@ -98,7 +98,9 @@ export function PlaygroundPage() {
           accum += ev.text;
           setOutput(accum);
         } else if (ev.type === 'done') {
-          inputTokens = ev.usage.inputTokens;
+          // Cached input counts too — the agent's system prompt is mostly
+          // read from cache, so uncached input alone reads as a few tokens.
+          inputTokens = ev.usage.inputTokens + (ev.usage.cacheReadTokens ?? 0) + (ev.usage.cacheWriteTokens ?? 0);
           outputTokens = ev.usage.outputTokens;
         }
       }

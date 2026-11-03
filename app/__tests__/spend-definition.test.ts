@@ -14,7 +14,7 @@
  * cumulative `cost` event double-counts the whole run.
  */
 
-import { addSpend, emptySpend, foldSpend, isSpendEvent } from '../src/lib/spend';
+import { addSpend, emptySpend, foldSpend, inputTokensOf, isSpendEvent } from '../src/lib/spend';
 
 const PHASE_END = {
   type: 'phase-end',
@@ -94,5 +94,12 @@ describe('the spend definition', () => {
     }
     expect(totals.costUsd).toBeCloseTo(0.02, 10);
     expect(totals.inputTokens).toBe(2000);
+  });
+
+  it('counts cached input as input — an agent session reads most of its prompt from cache', () => {
+    const cached = { ...PHASE_END, inputTokens: 3, cacheReadTokens: 12_000, cacheWriteTokens: 4_000 };
+    expect(inputTokensOf(cached)).toBe(16_003);
+    expect(inputTokensOf({ inputTokens: 3, cacheReadTokens: 'x' })).toBe(3);
+    expect(foldSpend([cached, PHASE_ERROR]).inputTokens).toBe(17_003);
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { listOrchestrations } from '../api';
+import { inputTokensOf } from '../lib/spend';
 import { Card, Hint, Page, SectionTitle } from './Page';
 import { SearchablePills } from './SearchablePills';
 
@@ -39,7 +40,10 @@ type Side = {
   err: string | null;
 };
 
-const TERMINAL = new Set(['completed', 'error', 'cancelled', 'paused']);
+/** Statuses that end a side's poll — the server's RunStatus values
+ *  (`done` is success), plus `paused`: a side stopped at a gate won't move
+ *  until someone approves it. */
+const TERMINAL = new Set(['done', 'error', 'cancelled', 'interrupted', 'paused']);
 
 async function startRun(
   orchestrationName: string,
@@ -75,6 +79,8 @@ async function fetchRun(id: string): Promise<RunSummary> {
     events: Array<{
       type: string;
       inputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
       outputTokens?: number;
       costUsd?: number;
     }>;
@@ -87,7 +93,7 @@ async function fetchRun(id: string): Promise<RunSummary> {
   for (const ev of run.events ?? []) {
     if (ev.type === 'phase-end') {
       phaseCount += 1;
-      totalInputTokens += ev.inputTokens ?? 0;
+      totalInputTokens += inputTokensOf(ev);
       totalOutputTokens += ev.outputTokens ?? 0;
       totalCostUsd += ev.costUsd ?? 0;
     } else if (ev.type === 'phase-error' || ev.type === 'run-error') {
@@ -218,7 +224,7 @@ export function ABComparePage() {
   return (
     <Page
       title="A/B compare"
-      subtitle="Run two orchestrations against the same initial input. Side-by-side cost, latency, output diff.">
+      subtitle="Run two orchestrations against the same initial input. Cost, latency and output side by side.">
       <SectionTitle>Inputs</SectionTitle>
       <Card>
         <View style={{ gap: 8 }}>

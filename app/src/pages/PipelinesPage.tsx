@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type ViewStyle,
 } from 'react-native';
 import {
   deleteOrchestration,
@@ -86,7 +88,14 @@ import {
 } from '../defaultPipelines';
 
 type ViewMode = 'pipeline' | 'graph' | 'tree';
-type Status = 'idle' | 'loading' | 'saving' | 'error';
+type Status = 'idle' | 'loading' | 'saving' | 'error' | 'unsaved';
+
+/** A pipeline with no steps yet — what "Create blank" makes. The server
+ *  refuses to save one (a pipeline needs at least one phase), so it stays
+ *  unsaved until its first phase is added. */
+function hasNoPhases(n: Node): boolean {
+  return Array.isArray(n.phases) && n.phases.length === 0;
+}
 
 /** A spinning ⟳ + status word shown next to the orchestration that's
  *  currently running in the sidebar list — so a run is visible from the
@@ -669,6 +678,10 @@ export function PipelinesPage({
   }
 
   async function persist(next: Node) {
+    if (hasNoPhases(next)) {
+      setStatus('unsaved');
+      return next;
+    }
     setStatus('saving');
     try {
       const saved = await saveOrchestration(next);
@@ -977,7 +990,11 @@ async function handleDuplicate() {
 
   const validationErrors = useMemo<ValidationError[]>(() => {
     if (!active) return [];
-    const schemaErrors = validateOrchestration(active);
+    // An empty new pipeline isn't an error yet — the canvas already says to
+    // add a phase, and the header that it isn't saved.
+    const schemaErrors = validateOrchestration(active).filter(
+      e => !(hasNoPhases(active) && e.message === 'phases must be a non-empty array'),
+    );
     const agentWarnings = knownAgentPaths.size > 0
       ? validateAgentExistence(active, knownAgentPaths)
       : [];
@@ -4404,6 +4421,9 @@ function PageHeader({
         {status === 'idle' && (
           <Text style={styles.statusIdle}>synced to disk</Text>
         )}
+        {status === 'unsaved' && (
+          <Text style={styles.statusUnsaved}>not saved yet — add a phase to save</Text>
+        )}
         {status === 'error' && (
           <Text style={styles.statusError}>
             error{errorMsg ? `: ${errorMsg}` : ''}
@@ -4722,6 +4742,15 @@ function uniqueName(base: string, existing: Set<string>): string {
   return `${slug}-${i}`;
 }
 
+/** A transparent layer under a pop-up menu that closes it on a click
+ *  anywhere else. On web it is pinned to the viewport: an absolute layer
+ *  oversized to cover the screen widened the page to ~3,400px, so opening a
+ *  menu let the whole page scroll sideways. */
+const TAP_OUTSIDE: ViewStyle =
+  Platform.OS === 'web'
+    ? { position: 'fixed' as ViewStyle['position'], top: 0, left: 0, right: 0, bottom: 0 }
+    : { position: 'absolute', top: -2000, left: -2000, right: -2000, bottom: -2000 };
+
 const styles = StyleSheet.create({
   // minHeight:0 lets the inner scroll areas bound themselves to the viewport
   // instead of growing the whole document (which caused a blank scroll region
@@ -4746,6 +4775,7 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center' },
   statusSaving: { fontSize: 11, color: '#2563eb' },
   statusIdle: { fontSize: 11, color: '#059669' },
+  statusUnsaved: { fontSize: 11, color: '#b45309' },
   statusError: { fontSize: 11, color: '#dc2626', maxWidth: 400 },
 
   chipStripScroll: { flexGrow: 0 },
@@ -5043,11 +5073,7 @@ const styles = StyleSheet.create({
   },
   newButtonText: { fontSize: 12, color: '#ffffff', fontWeight: '700' },
   newMenuBackdrop: {
-    position: 'absolute',
-    top: -2000,
-    left: -2000,
-    right: -2000,
-    bottom: -2000,
+    ...TAP_OUTSIDE,
     backgroundColor: 'transparent',
   },
   newMenu: {
@@ -5158,11 +5184,7 @@ const styles = StyleSheet.create({
   overflowBackdrop: {
     // Covers the viewport so a click anywhere outside the menu
     // dismisses it. Z-order is below the menu itself.
-    position: 'absolute',
-    top: -1000,
-    left: -2000,
-    right: -2000,
-    bottom: -1000,
+    ...TAP_OUTSIDE,
     backgroundColor: 'transparent',
   },
   overflowMenu: {

@@ -16,10 +16,10 @@ type TriggerEntry = {
   kind: string;
   /** The kind's identity — path (webhook) / expr (cron) / source (polling) /
    *  event|environment|queue name (the named HTTP-fired kinds). Also the
-   *  segment to POST at /api/triggers/<name> for the HTTP-fired kinds. */
+   *  segment to call at /api/triggers/<name> for the HTTP-fired kinds. */
   name: string;
   orchestration: string;
-  /** 'http' = fired by POST /api/triggers/<name> (testable here);
+  /** 'http' = fired by a request to /api/triggers/<name> (testable here);
    *  'schedule' = fired by a server-side timer (read-only). */
   firing: 'http' | 'schedule';
   /** Human one-liner from the kind registry. */
@@ -46,18 +46,30 @@ async function listTriggers(): Promise<TriggerEntry[]> {
   return Array.isArray(data) ? (data as TriggerEntry[]) : [];
 }
 
+/** The HTTP method a trigger fires on — a webhook can declare its own (the
+ *  server answers 405 to any other); every other http-fired kind is POST. */
+function fireMethod(e: TriggerEntry): string {
+  return typeof e.config.method === 'string' ? e.config.method.toUpperCase() : 'POST';
+}
+
+/** Does a request with this method carry a body? */
+function sendsBody(method: string): boolean {
+  return method !== 'GET' && method !== 'HEAD';
+}
+
 async function fireTrigger(
   name: string,
+  method: string,
   body: string,
   idempotencyKey?: string,
 ): Promise<{ status: number; body: string }> {
   const res = await fetch(`/api/triggers/${encodeURIComponent(name)}`, {
-    method: 'POST',
+    method,
     headers: {
-      'content-type': 'application/json',
+      ...(sendsBody(method) ? { 'content-type': 'application/json' } : {}),
       ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
-    body,
+    ...(sendsBody(method) ? { body } : {}),
   });
   const text = await res.text();
   return { status: res.status, body: text };
@@ -255,13 +267,19 @@ export function TriggersPage() {
   }, [entries]);
 
   const selectedEntry = entries.find(e => rowKey(e) === selectedKey);
+  const selectedMethod = selectedEntry ? fireMethod(selectedEntry) : 'POST';
 
   async function runTest() {
     if (!selectedEntry || selectedEntry.firing !== 'http') return;
     setTesting(true);
     setTestResult(null);
     try {
-      const r = await fireTrigger(selectedEntry.name, testBody, testKey.trim() || undefined);
+      const r = await fireTrigger(
+        selectedEntry.name,
+        selectedMethod,
+        testBody,
+        testKey.trim() || undefined,
+      );
       setTestResult(r);
       // A successful fire durably queues a delivery; the worker creates the
       // run. The Runs / Deliveries tabs surface what happened next.
@@ -450,25 +468,32 @@ export function TriggersPage() {
       <Card
         title={
           selectedEntry
-            ? `POST /api/triggers/${selectedEntry.name}`
+            ? `${selectedMethod} /api/triggers/${selectedEntry.name}`
             : 'Select an HTTP-fired trigger above'
         }
         subtitle={
           selectedEntry
-            ? `Fires "${orchLabel(selectedEntry.orchestration)}" (${selectedEntry.kind}). The body below becomes the run's initial input.`
+            ? `Fires "${orchLabel(selectedEntry.orchestration)}" (${selectedEntry.kind}). ` +
+              (sendsBody(selectedMethod)
+                ? "The body below becomes the run's initial input."
+                : `A ${selectedMethod} request carries no body, so the run starts with no input.`)
             : 'Nothing is selected. Click a webhook / events / deployment / queue row above to choose what to fire. Cron and polling are schedule-fired and can’t be triggered manually.'
         }>
         {selectedEntry && (
           <View style={{ gap: 8 }}>
-            <Text style={styles.label}>Body</Text>
-            <TextInput
-              value={testBody}
-              onChangeText={setTestBody}
-              multiline
-              numberOfLines={5}
-              style={[styles.input, { fontFamily: 'monospace' }]}
-              placeholder='{"input":"sample"}'
-            />
+            {sendsBody(selectedMethod) && (
+              <>
+                <Text style={styles.label}>Body</Text>
+                <TextInput
+                  value={testBody}
+                  onChangeText={setTestBody}
+                  multiline
+                  numberOfLines={5}
+                  style={[styles.input, { fontFamily: 'monospace' }]}
+                  placeholder='{"input":"sample"}'
+                />
+              </>
+            )}
             <Text style={styles.label}>Idempotency-Key (optional)</Text>
             <TextInput
               value={testKey}

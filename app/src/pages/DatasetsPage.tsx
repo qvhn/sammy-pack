@@ -358,7 +358,7 @@ export function DatasetsPage() {
           {draft && (
             <Card
               title={draft.name}
-              subtitle={`${stats?.rowCount ?? 0} rows · ${stats?.expectedCount ?? 0} with expected output${stats && stats.tagCounts.size > 0 ? ` · ${Array.from(stats.tagCounts.entries()).map(([t, n]) => `${t}:${n}`).join(', ')}` : ''}`}
+              subtitle={`${stats?.rowCount ?? 0} ${(stats?.rowCount ?? 0) === 1 ? 'row' : 'rows'} · ${stats?.expectedCount ?? 0} with expected output${stats && stats.tagCounts.size > 0 ? ` · ${Array.from(stats.tagCounts.entries()).map(([t, n]) => `${t}:${n}`).join(', ')}` : ''}`}
               right={
                 <View style={styles.actionRow}>
                   <Pressable

@@ -252,7 +252,10 @@ export type RunEvent =
       type: 'phase-end';
       phaseName: string;
       output: string;
+      /** Uncached input; cached input is in the two fields below. */
       inputTokens: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
       outputTokens: number;
       /** USD cost of this single phase call (0 if model price is unknown). */
       costUsd: number;
@@ -267,6 +270,10 @@ export type RunEvent =
        *  Equal to phaseName for unscoped leaves. The run-controller stores
        *  leaf outputs under this key; display surfaces keep phaseName. */
       replayKey?: string;
+      /** This phase didn't run now: a resume or fork replayed the output it
+       *  produced before (no tokens, no cost). The Runs log shows the
+       *  original once rather than the same step twice. */
+      replayed?: true;
       ts: number;
     }
   | { type: 'phase-skipped'; phaseName: string; reason: string; ts: number }
@@ -297,6 +304,8 @@ export type RunEvent =
        *  never the cumulative run total. */
       costUsd?: number;
       inputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
       outputTokens?: number;
       ts: number;
     }
@@ -1607,6 +1616,7 @@ async function* runAgentPhase(
       durationMs: Date.now() - startMs,
       model: ctx.model,
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -1921,6 +1931,8 @@ async function* runAgentPhase(
   const chargeSpend = (): {
     costUsd: number;
     inputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
     outputTokens: number;
   } => {
     const cost = costUsd(effectiveModel, totalInputTokens, totalOutputTokens, {
@@ -1933,6 +1945,8 @@ async function* runAgentPhase(
     return {
       costUsd: cost,
       inputTokens: totalInputTokens,
+      cacheReadTokens: totalCacheReadTokens,
+      cacheWriteTokens: totalCacheWriteTokens,
       outputTokens: totalOutputTokens,
     };
   };
@@ -2384,6 +2398,8 @@ async function* runAgentPhase(
     phaseName: node.name,
     output: aggregateOutput,
     inputTokens: totalInputTokens,
+    cacheReadTokens: totalCacheReadTokens,
+    cacheWriteTokens: totalCacheWriteTokens,
     outputTokens: totalOutputTokens,
     costUsd: cost,
     durationMs: Date.now() - startMs,
@@ -2482,6 +2498,7 @@ async function* runA2aPhase(
       durationMs: Date.now() - startMs,
       model: ctx.model,
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -2631,7 +2648,7 @@ async function* runWaitPhase(
     (ctx.replayScope === '' ? ctx.replayOutputs.get(node.name) : undefined);
   if (replayed !== undefined) {
     ctx.lastOutput = replayed;
-    yield endEvent(replayed);
+    yield { ...endEvent(replayed), replayed: true } as RunEvent;
     return;
   }
 
@@ -2974,6 +2991,7 @@ async function* runHttpPhase(
       durationMs: Date.now() - startMs,
       model: 'http',
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -3129,6 +3147,7 @@ async function* runCodePhase(
       durationMs: Date.now() - startMs,
       model: 'code',
       replayKey,
+      replayed: true,
       ts: Date.now(),
     };
     return;
@@ -5914,7 +5933,7 @@ async function* runHarness(
   //    attributed to the step it was spent on.
   const spend = {
     charged: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, usd: 0 },
-    step: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    step: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: 0 },
   };
   /** Fold the session's cumulative usage into the run totals; a breach is
    *  returned for the caller to stop on. */
@@ -5942,6 +5961,8 @@ async function* runHarness(
     ctx.usage.totalOutputTokens += d.output;
     ctx.usage.totalCostUsd += d.usd;
     spend.step.inputTokens += d.input;
+    spend.step.cacheReadTokens += cum.cacheRead - c.cacheRead;
+    spend.step.cacheWriteTokens += cum.cacheWrite - c.cacheWrite;
     spend.step.outputTokens += d.output;
     spend.step.costUsd += d.usd;
     return enforceBudgets(ctx);
@@ -5949,7 +5970,7 @@ async function* runHarness(
   /** What the session spent since the last step ended — that step's cost. */
   const takeStepSpend = () => {
     const out = spend.step;
-    spend.step = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    spend.step = { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: 0 };
     return out;
   };
 
