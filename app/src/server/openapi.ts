@@ -158,6 +158,7 @@ export function buildOpenApiDoc(): object {
     tags: [
       { name: 'runs', description: 'Run lifecycle: start, inspect, control.' },
       { name: 'preview', description: 'Symbolic dry-run of an orchestration.' },
+      { name: 'repos', description: 'Find, clone and browse for the local repositories runs work in.' },
       {
         name: 'triggers',
         description:
@@ -695,6 +696,69 @@ export function buildOpenApiDoc(): object {
             '400': errorResponse('Invalid JSON or malformed vars/input/depth/lint.'),
             '404': errorResponse('Orchestration not found.'),
             '500': errorResponse('Preview walker failure.'),
+          },
+        },
+      },
+
+      // ── Repositories ──────────────────────────────────────────────────
+      '/api/repos/browse': {
+        get: {
+          tags: ['repos'],
+          summary: 'List the folders in a directory (the Run dialog folder picker)',
+          description:
+            'Folders only, never files; dot-folders hidden; symlinks to ' +
+            'folders included; sorted case-insensitively and capped at 2000 ' +
+            '(`truncated` says when there were more). Only paths under the ' +
+            'home folder and the repo search roots (`SAMMY_REPO_ROOTS`, else ' +
+            '~/git, ~/src, ~/code, ~/projects, ~/Developer and the folder ' +
+            'holding the workspace) can be listed. Answers only requests made ' +
+            'on the server\'s own machine (a loopback connection with a ' +
+            'localhost Host header); anything else is 403.',
+          parameters: [
+            {
+              name: 'path',
+              in: 'query',
+              required: false,
+              description: 'Absolute folder to list; `~` expands to the home folder. Default: the first repo root, else home.',
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': jsonResponse('The folder and its sub-folders.', {
+              type: 'object',
+              required: ['path', 'parent', 'home', 'roots', 'entries', 'truncated'],
+              properties: {
+                path: { type: 'string' },
+                parent: { type: ['string', 'null'], description: 'The folder above, or null at the top of what may be browsed.' },
+                home: { type: 'string' },
+                roots: {
+                  type: 'array',
+                  description: 'Shortcuts: Home, then each repo search root.',
+                  items: {
+                    type: 'object',
+                    required: ['label', 'path'],
+                    properties: { label: { type: 'string' }, path: { type: 'string' } },
+                  },
+                },
+                entries: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['name', 'path', 'git'],
+                    properties: {
+                      name: { type: 'string' },
+                      path: { type: 'string' },
+                      git: { type: 'boolean', description: 'The folder is a git repository (has a .git folder or file).' },
+                    },
+                  },
+                },
+                truncated: { type: 'boolean' },
+              },
+            }),
+            '400': errorResponse('Not an absolute path, or not a folder.'),
+            '403': errorResponse('Outside home and the repo roots, unreadable, or not a request from the server\'s own machine.'),
+            '404': errorResponse('No such folder.'),
+            '405': errorResponse('Method not allowed.'),
           },
         },
       },

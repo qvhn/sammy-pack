@@ -205,6 +205,24 @@ export async function cloneRepoUrl(url: string): Promise<{ local: string }> {
   return json<{ local: string }>(res);
 }
 
+/** The folders in one directory (GET /api/repos/browse) — what the Run
+ *  dialog's folder picker shows. Only on the server's own machine, and only
+ *  under the home folder and the repo search roots. */
+export type DirListing = {
+  path: string;
+  parent: string | null;
+  home: string;
+  roots: Array<{ label: string; path: string }>;
+  entries: Array<{ name: string; path: string; git: boolean }>;
+  truncated: boolean;
+};
+
+export async function browseDirs(dir?: string): Promise<DirListing> {
+  const q = dir ? `?path=${encodeURIComponent(dir)}` : '';
+  const res = await fetch(`/api/repos/browse${q}`);
+  return json<DirListing>(res);
+}
+
 export type AgentFile = { name: string; raw: string };
 
 /** One scan result from POST /api/agents/scan. */

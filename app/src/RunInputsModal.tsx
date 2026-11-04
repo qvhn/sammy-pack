@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { cloneRepoUrl, locateRepo } from './api';
+import { FolderPicker } from './FolderPicker';
 import { type ExecutionMode, type HarnessFollow, type Node } from './types';
 import { declaredAgentTools } from './declaredTools';
 import { getAllowAgentTools } from './store/apiKey';
@@ -138,6 +139,8 @@ export function RunInputsModal({
   const [instructions, setInstructions] = useState('');
   // A repository URL typed into an input that feeds a `worktrees` entry:
   // the clone offer shown when this machine has no clone of it.
+  // The repository input the folder picker is choosing for, while it's open.
+  const [browsing, setBrowsing] = useState<string | null>(null);
   const [cloneOffer, setCloneOffer] = useState<{
     url: string;
     cloneTo: string | null;
@@ -189,10 +192,12 @@ export function RunInputsModal({
   }, [orchestration]);
 
   // Escape closes the dialog (web). Not while a clone is in flight — that
-  // request would keep running behind a closed dialog.
+  // request would keep running behind a closed dialog — and not while the
+  // folder picker is open: there Escape closes the picker.
   const cloneBusy = !!cloneOffer?.busy;
+  const pickerOpen = browsing !== null;
   useEffect(() => {
-    if (!orchestration || cloneBusy) return;
+    if (!orchestration || cloneBusy || pickerOpen) return;
     const g = globalThis as unknown as {
       addEventListener?: (t: string, fn: (e: { key?: string }) => void) => void;
       removeEventListener?: (t: string, fn: (e: { key?: string }) => void) => void;
@@ -203,7 +208,7 @@ export function RunInputsModal({
     };
     g.addEventListener('keydown', onKey);
     return () => g.removeEventListener?.('keydown', onKey);
-  }, [orchestration, cloneBusy, onClose]);
+  }, [orchestration, cloneBusy, pickerOpen, onClose]);
 
   // The modal ALWAYS opens for a selected orchestration — even with zero
   // declared inputs, the optional instructions box still renders.
@@ -303,7 +308,7 @@ export function RunInputsModal({
 
   return (
     <View style={styles.modalOverlay}>
-      <Pressable style={styles.modalBackdrop} onPress={onClose} />
+      <Pressable style={styles.modalBackdrop} onPress={pickerOpen ? undefined : onClose} />
       <View style={styles.modalPanel}>
         <View style={styles.modalHeader}>
           <Text style={styles.modalTitle}>
@@ -328,18 +333,29 @@ export function RunInputsModal({
                   onFile={f => setFiles(s => ({ ...s, [d.name]: f }))}
                 />
               ) : (
-                <TextInput
-                  ref={d.name === firstTextName ? firstFieldRef : undefined}
-                  value={values[d.name] ?? ''}
-                  onChangeText={t => setValues(s => ({ ...s, [d.name]: t }))}
-                  onBlur={() => setTouched(s => ({ ...s, [d.name]: true }))}
-                  // Enter in a single-line field runs (when the form is valid).
-                  onSubmitEditing={trySubmit}
-                  returnKeyType="go"
-                  placeholder={runInputPlaceholder(d)}
-                  style={styles.input}
-                  autoCapitalize="none"
-                />
+                <View style={styles.inputRow}>
+                  <TextInput
+                    ref={d.name === firstTextName ? firstFieldRef : undefined}
+                    value={values[d.name] ?? ''}
+                    onChangeText={t => setValues(s => ({ ...s, [d.name]: t }))}
+                    onBlur={() => setTouched(s => ({ ...s, [d.name]: true }))}
+                    // Enter in a single-line field runs (when the form is valid).
+                    onSubmitEditing={trySubmit}
+                    returnKeyType="go"
+                    placeholder={runInputPlaceholder(d)}
+                    style={[styles.input, styles.inputGrow]}
+                    autoCapitalize="none"
+                  />
+                  {repoInputs.has(d.name) ? (
+                    <Pressable
+                      onPress={() => setBrowsing(d.name)}
+                      style={[styles.button, styles.secondaryButton]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Browse for the ${d.name} folder`}>
+                      <Text style={styles.secondaryButtonText}>Browse…</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               )}
             </View>
           ))}
@@ -433,6 +449,17 @@ export function RunInputsModal({
           </View>
         )}
       </View>
+      {browsing !== null ? (
+        <FolderPicker
+          start={values[browsing]}
+          onClose={() => setBrowsing(null)}
+          onPick={dir => {
+            setValues(s => ({ ...s, [browsing]: dir }));
+            setTouched(s => ({ ...s, [browsing]: true }));
+            setBrowsing(null);
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -637,6 +664,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   instructionsInput: { minHeight: 80, paddingTop: 8 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inputGrow: { flex: 1 },
   dropZone: {
     borderWidth: 1,
     borderStyle: 'dashed',
