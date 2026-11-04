@@ -8,6 +8,7 @@
  * connectors (GitHub, Bitbucket, ...) instead — see docs/architecture.md.
  */
 
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { execFile, spawn } from 'node:child_process';
@@ -64,6 +65,7 @@ import {
   normalizeRepoUrl,
   repoSearchRoots,
 } from './src/server/repo-locate';
+import { BrowseError, listDirs } from './src/server/dir-browse';
 import {
   fireGateNotify,
   fireGateStaleNotify,
@@ -8014,11 +8016,35 @@ export async function mountSammyApi(
       //        a clone already exists). The Run dialog uses these to turn a
       //        pasted web address into the local path a `worktrees` entry
       //        needs, offering the clone when there is none.
+      //   GET  /api/repos/browse?path=<dir>      → { path, parent, home,
+      //        roots, entries, truncated } — the folders in <dir> for the Run
+      //        dialog's folder picker. Loopback requests only, and only under
+      //        the home folder and the repo search roots (dir-browse.ts).
       server.middlewares.use('/api/repos', answered(async (req, res) => {
         const method = (req.method ?? 'GET').toUpperCase();
         const [pathPart, query = ''] = (req.url ?? '/').split('?');
         const sub = pathPart.replace(/\/+$/, '');
         const roots = await repoSearchRoots(root);
+        if (sub === '/browse') {
+          if (method !== 'GET') return sendError(res, 405, 'Method not allowed');
+          // A folder listing describes this machine's disk: answer only the
+          // person sitting at it, as "Open in Terminal" does. The Host check
+          // stops a web page that rebinds its own name to 127.0.0.1.
+          const hostHeader = String(req.headers.host ?? '').replace(/:\d+$/, '');
+          if (
+            !/^(127\.|::1$|::ffff:127\.)/.test(req.socket.remoteAddress ?? '') ||
+            !/^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i.test(hostHeader)
+          ) {
+            return sendError(res, 403, "Browsing folders only works on the server's own machine — type the repository's path instead");
+          }
+          try {
+            const target = new URLSearchParams(query).get('path') ?? undefined;
+            return sendJson(res, 200, await listDirs({ target, home: os.homedir(), roots }));
+          } catch (err) {
+            if (err instanceof BrowseError) return sendError(res, err.status, err.message);
+            throw err;
+          }
+        }
         if (sub === '/locate') {
           if (method !== 'GET') return sendError(res, 405, 'Method not allowed');
           const url = new URLSearchParams(query).get('url')?.trim() ?? '';
