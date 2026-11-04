@@ -249,6 +249,16 @@ export type RunEvent =
       ts: number;
     }
   | {
+      /** The Claude Code session an agent phase runs in and its folder, so
+       *  the Runs page can reopen that agent's conversation in a terminal
+       *  (`claude --resume`). Only Claude Code phases have one. */
+      type: 'phase-session';
+      phaseName: string;
+      sessionId: string;
+      cwd: string;
+      ts: number;
+    }
+  | {
       type: 'phase-end';
       phaseName: string;
       output: string;
@@ -2176,6 +2186,14 @@ async function* runAgentPhase(
             trigger: ev.trigger,
             preTokens: ev.preTokens,
             ...(ev.postTokens !== undefined ? { postTokens: ev.postTokens } : {}),
+            ts: Date.now(),
+          };
+        } else if (ev.type === 'session') {
+          yield {
+            type: 'phase-session',
+            phaseName: node.name,
+            sessionId: ev.sessionId,
+            cwd: ev.cwd,
             ts: Date.now(),
           };
         } else if (ev.type === 'heartbeat') {

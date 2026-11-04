@@ -156,6 +156,14 @@ export type SdkStreamChunk =
   | { type: 'tool-use'; toolUseId: string; name: string; input: unknown }
   | { type: 'tool-result'; toolUseId: string; output: string; isError: boolean }
   | {
+      /** The Claude Code session this call runs in, and the folder it runs
+       *  from — the two things `claude --resume` needs to reopen it (a
+       *  session is found by the folder it ran in). Once, at the start. */
+      type: 'session';
+      sessionId: string;
+      cwd: string;
+    }
+  | {
       /** Throttled liveness beat (≤ ~1 per SDK_HEARTBEAT_MS). Emitted when
        *  SDK messages are flowing but none has produced another chunk —
        *  thinking deltas, streamed tool-call arguments (input_json_delta),
@@ -716,6 +724,15 @@ export async function* streamSdk(
             };
           }
         }
+      }
+    } else if (
+      msg.type === 'system' &&
+      (msg as { subtype?: string }).subtype === 'init'
+    ) {
+      const init = msg as { session_id?: string; cwd?: string };
+      if (init.session_id) {
+        lastYieldAt = Date.now();
+        yield { type: 'session', sessionId: init.session_id, cwd: init.cwd ?? cwd ?? '' };
       }
     } else if (
       msg.type === 'system' &&

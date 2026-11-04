@@ -13,7 +13,7 @@
  * Server-only (node:fs, the SDK).
  */
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -31,6 +31,7 @@ import {
   type HarnessStreamOptions,
   type HarnessToolSpec,
 } from '../llm/harness';
+import type { TerminalApp } from './harness-settings';
 
 /** A step tool's string parameters as a zod shape (`name?` = optional). */
 function zodShape(params: HarnessToolSpec['params']): Record<string, unknown> {
@@ -183,11 +184,47 @@ export function existingHarnessControl(runId: string): HarnessControl | undefine
   return controls.get(runId);
 }
 
-/** Open a terminal window on THIS machine running `command`. macOS
- *  (Terminal.app) and Linux desktops (x-terminal-emulator / gnome-terminal);
- *  anything else answers with why not, and the caller shows the command to
- *  copy instead. */
-export async function openTerminalWith(command: string): Promise<{ opened: boolean; reason?: string }> {
+/** The cmux command-line tool, when cmux is installed. */
+export function cmuxBinary(): string | null {
+  const candidates = [
+    ...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, 'cmux')),
+    '/Applications/cmux.app/Contents/Resources/bin/cmux',
+    path.join(os.homedir(), 'Applications/cmux.app/Contents/Resources/bin/cmux'),
+  ];
+  return candidates.find(p => fs.existsSync(p)) ?? null;
+}
+
+/** Run a command to completion: did it exit 0, and its stderr's tail. */
+function runToExit(cmd: string, args: string[]): Promise<{ ok: boolean; stderr: string }> {
+  return new Promise(resolve => {
+    execFile(cmd, args, { timeout: 10_000 }, (err, _stdout, stderr) =>
+      resolve({ ok: !err, stderr: String(stderr || (err as Error | null)?.message || '').trim().slice(-300) }),
+    );
+  });
+}
+
+/** A new cmux workspace running `command`. cmux takes commands over its
+ *  socket, so when the app isn't running yet it is launched and asked again. */
+async function openInCmux(bin: string, command: string, name: string): Promise<{ ok: boolean; stderr: string }> {
+  const args = ['new-workspace', '--name', name, '--command', command];
+  const first = await runToExit(bin, args);
+  if (first.ok) return first;
+  await runToExit('open', ['-a', 'cmux']);
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    if ((await runToExit(bin, ['ping'])).ok) return runToExit(bin, args);
+  }
+  return first;
+}
+
+/** Open a terminal window on THIS machine running `command`. macOS (cmux
+ *  when it is installed or chosen, else Terminal.app) and Linux desktops
+ *  (x-terminal-emulator / gnome-terminal); anything else answers with why
+ *  not, and the caller shows the command to copy instead. */
+export async function openTerminalWith(
+  command: string,
+  opts: { app?: TerminalApp | null; title?: string } = {},
+): Promise<{ opened: boolean; app?: string; reason?: string }> {
   const run = (cmd: string, args: string[]) =>
     new Promise<boolean>(resolve => {
       const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
@@ -197,6 +234,16 @@ export async function openTerminalWith(command: string): Promise<{ opened: boole
         resolve(true);
       });
     });
+  if (process.platform === 'darwin' && opts.app !== 'terminal') {
+    const bin = cmuxBinary();
+    if (bin) {
+      const res = await openInCmux(bin, command, opts.title ?? 'sammy-pack');
+      if (res.ok) return { opened: true, app: 'cmux' };
+      if (opts.app === 'cmux') return { opened: false, reason: `cmux didn't open a workspace: ${res.stderr}` };
+    } else if (opts.app === 'cmux') {
+      return { opened: false, reason: 'cmux is not installed' };
+    }
+  }
   if (process.platform === 'darwin') {
     const escaped = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const ok = await run('osascript', [
@@ -205,7 +252,7 @@ export async function openTerminalWith(command: string): Promise<{ opened: boole
       '-e',
       'tell application "Terminal" to activate',
     ]);
-    return ok ? { opened: true } : { opened: false, reason: 'osascript is not available' };
+    return ok ? { opened: true, app: 'Terminal' } : { opened: false, reason: 'osascript is not available' };
   }
   if (process.platform === 'linux') {
     const shell = `${command}; exec "\${SHELL:-bash}"`;

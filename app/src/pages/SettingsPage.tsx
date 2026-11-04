@@ -286,11 +286,16 @@ export function SettingsPage() {
       </Card>
       </CollapsibleSection>
 
-      <CollapsibleSection title="Harness runs" hint="how strictly a harness follows the steps">
+      <CollapsibleSection title="Harness runs" hint="how strictly a harness follows the steps, and which terminal opens">
       <Card
         title="Default strictness"
         subtitle="A harness run has one agent follow an orchestration's steps and do each itself. This is how closely it must keep to them when neither the orchestration (harness.follow) nor the Run dialog says. Stored on the server, so runs started by triggers and the API follow it too.">
         <HarnessDefaultsPanel />
+      </Card>
+      <Card
+        title="Terminal app"
+        subtitle="Which app opens when you press Continue in terminal on a run. It opens on the server's machine, so this applies when the server runs on your computer (macOS).">
+        <TerminalAppPanel />
       </Card>
       </CollapsibleSection>
 
@@ -1011,6 +1016,67 @@ function HarnessDefaultsPanel() {
         The Run dialog can change it for one run, and an orchestration can set
         its own (harness.follow) — or lock it, so a run may only make it
         stricter. Gates, budgets and the sandbox hold in every mode.
+      </Hint>
+    </View>
+  );
+}
+
+const TERMINAL_CHOICES: Array<{ value: 'cmux' | 'terminal' | null; label: string; help: string }> = [
+  { value: null, label: 'Automatic', help: 'cmux when it is installed, otherwise Terminal.' },
+  { value: 'cmux', label: 'cmux', help: 'A new cmux workspace, named after the run and step.' },
+  { value: 'terminal', label: 'Terminal', help: 'A new window in macOS Terminal.' },
+];
+
+function TerminalAppPanel() {
+  const [terminal, setTerminal] = useState<'cmux' | 'terminal' | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getHarnessSettings()
+      .then(s => {
+        setTerminal(s.terminal ?? null);
+        setLoaded(true);
+      })
+      .catch(e => setError(`could not read the current choice (${(e as Error).message}).`));
+  }, []);
+
+  function choose(next: 'cmux' | 'terminal' | null) {
+    setError(null);
+    saveHarnessSettings({ terminal: next })
+      .then(s => {
+        setTerminal(s.terminal ?? null);
+        setSavedAt(Date.now());
+        setTimeout(() => setSavedAt(null), 1500);
+      })
+      .catch(e => setError((e as Error).message));
+  }
+
+  const current = TERMINAL_CHOICES.find(c => c.value === terminal) ?? TERMINAL_CHOICES[0];
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={styles.buttonRow} accessibilityRole="radiogroup" accessibilityLabel="Terminal app">
+        {TERMINAL_CHOICES.map(c => (
+          <Pressable
+            key={c.label}
+            onPress={() => loaded && choose(c.value)}
+            disabled={!loaded}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: current === c, disabled: !loaded }}
+            accessibilityLabel={c.label}
+            style={[styles.followPill, current === c && styles.followPillOn]}>
+            <Text style={[styles.followPillText, current === c && styles.followPillTextOn]}>{c.label}</Text>
+          </Pressable>
+        ))}
+        {savedAt && <Text style={styles.savedNote}>Saved.</Text>}
+      </View>
+      <Text style={styles.label}>{current.help}</Text>
+      {error && <Text style={{ color: '#dc2626', fontSize: 11 }}>{error}</Text>}
+      <Hint>
+        A harness run is taken over and can be handed back. A pipeline run opens
+        one agent step's conversation as a copy, so the run itself is unchanged.
+        When the server is on another machine, the command is copied instead.
       </Hint>
     </View>
   );
