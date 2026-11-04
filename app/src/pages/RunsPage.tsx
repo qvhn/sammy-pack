@@ -24,6 +24,7 @@ import { HarnessPanel } from './HarnessPanel';
 import { ContinueInTerminalButton, canContinueInTerminal } from './ContinueInTerminal';
 import { getAuthMode } from '../store/apiKey';
 import { ArtifactViewer } from './ArtifactViewer';
+import { RunResultCard } from './RunResultCard';
 import { Card, Hint, Page } from './Page';
 
 /** Synthetic id used for the active (in-flight) run in the sidebar. */
@@ -941,6 +942,23 @@ function RunDetailCard({
           onReject={() => onGate('reject')}
         />
       )}
+      {/* What a settled run produced, above the log of how. A waiting run
+          has the gate panel above instead; a live one has the log itself. */}
+      {(run.status === 'done' ||
+        run.status === 'error' ||
+        run.status === 'cancelled' ||
+        run.status === 'interrupted') &&
+        run.events.length > 0 && (
+          <View style={styles.resultCard}>
+            <RunResultCard
+              run={run}
+              // The header already offers Continue in terminal.
+              terminal={false}
+              onRunAgain={isActive ? undefined : onReplay}
+              onRetryFrom={!isActive && onFork ? onFork : undefined}
+            />
+          </View>
+        )}
       <HarnessPanel
         run={run}
         gatedPhase={serverGate?.phaseName ?? null}
@@ -2174,6 +2192,7 @@ function formatDateTime(ts: number): string {
 }
 
 const styles = StyleSheet.create({
+  resultCard: { marginBottom: 12 },
   artifacts: {
     borderWidth: 1,
     borderColor: '#e5e7eb',

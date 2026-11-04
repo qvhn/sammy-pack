@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRuns } from './store/runs';
+import { gatedPhaseOf } from './lib/run-result';
 
 /**
  * A bottom dock for the Pipelines page that surfaces the OPEN orchestration's
@@ -69,6 +70,9 @@ export function RunDock({
   }, [isThis, active?.eventVersion]);
 
   if (!isThis || !active) return null;
+  // A server run held at a gate is decided on the page's Result card (which
+  // also offers request-changes and a note); the dock steps aside for it.
+  if (active.status === 'paused' && !pendingApproval && gatedPhaseOf(active)) return null;
 
   const isServerPaused = active.status === 'paused';
   const gated = !!pendingApproval || isServerPaused;
