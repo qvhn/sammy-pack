@@ -33,6 +33,9 @@ import {
 } from './apiKey';
 import { buildProviderRegistry } from '../llm/providers';
 import { useToast } from './toast';
+import { requestRun } from './runSelection';
+import { currentRoute, navigateTo, rememberedPipeline } from '../lib/hashRoute';
+import { deriveRunResult, gatedPhaseOf, linkKindLabel } from '../lib/run-result';
 
 /** How the Run dialog asked this run to execute (absent: as the
  *  orchestration says). */
@@ -414,13 +417,43 @@ export function RunsProvider({ children }: { children: ReactNode }) {
   const notifyTerminal = useCallback(
     (run: Run, status: RunStatus) => {
       const name = run.orchestrationName || 'run';
-      if (status === 'done') toast.show(`✓ ${name} finished`, 'success');
-      else if (status === 'error') toast.show(`✕ ${name} failed`, 'error');
+      // Looking at this pipeline or at Runs, the Result card already says
+      // it; anywhere else the notice carries the result itself — the link
+      // the run produced, and a click through to the run.
+      const route = currentRoute();
+      const looking =
+        route.page === 'runs' ||
+        (route.page === 'pipelines' && (route.pipeline ?? rememberedPipeline()) === name);
+      const result = deriveRunResult(run);
+      const hero = result.hero;
+      const notice = looking
+        ? undefined
+        : {
+            onPress: () => {
+              requestRun(run.id);
+              navigateTo({ page: 'runs' });
+            },
+            link: hero ? { label: 'Open ↗', url: hero.url } : undefined,
+            durationMs: 12000,
+          };
+      const made = hero && !looking ? ` · ${linkKindLabel(hero.kind)} ${hero.ref}` : '';
+      if (status === 'done') toast.show(`✓ ${name} finished${made}`, 'success', notice);
+      else if (status === 'error')
+        toast.show(
+          `✕ ${name} failed${result.failedPhase ? ` at ${result.failedPhase}` : ''}`,
+          'error',
+          notice,
+        );
       else if (status === 'interrupted')
         toast.show(`⚠ ${name} interrupted — resumable in Notifications`, 'error');
       else if (status === 'cancelled')
         toast.show(`⊘ ${name} cancelled`, 'info');
-      // 'paused' is an expected lock gate, already surfaced inline — no toast.
+      // 'paused' at a lock gate is surfaced inline where you are looking;
+      // elsewhere, say it is waiting on you.
+      else if (status === 'paused' && notice) {
+        const gated = gatedPhaseOf(run);
+        if (gated) toast.show(`⏸ ${name} is waiting for your approval at ${gated}`, 'info', notice);
+      }
     },
     [toast],
   );

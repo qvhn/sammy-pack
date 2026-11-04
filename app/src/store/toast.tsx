@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 /** Global toast queue. Mount once near the App root (in App.tsx via
  *  ToastProvider), call `useToast().show(msg, kind?)` anywhere.
@@ -24,6 +24,10 @@ export type ToastOptions = {
   /** Override the auto-dismiss window (ms). Defaults to 3000. Pass a larger
    *  value for actionable toasts the user should have time to click. */
   durationMs?: number;
+  /** A link shown as its own button beside the message (e.g. "Open ↗" on a
+   *  finished run's pull request). Opens in a new tab; the body's onPress
+   *  stays the toast's main action. */
+  link?: { label: string; url: string };
 };
 type Toast = {
   id: number;
@@ -31,6 +35,7 @@ type Toast = {
   kind: ToastKind;
   createdAt: number;
   onPress?: () => void;
+  link?: { label: string; url: string };
 };
 
 type Ctx = {
@@ -52,6 +57,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         kind,
         createdAt: Date.now(),
         onPress: opts?.onPress,
+        link: opts?.link,
       };
       setToasts(prev => [...prev, toast]);
       // Auto-dismiss. Actionable toasts linger longer so the user can click.
@@ -124,6 +130,17 @@ function ToastStack({
             t.onPress && styles.toastAction,
           ]}>
           <Text style={styles.text}>{t.message}</Text>
+          {t.link ? (
+            <Pressable
+              onPress={() => {
+                Linking.openURL(t.link!.url).catch(() => undefined);
+              }}
+              accessibilityRole="link"
+              accessibilityLabel={t.link.label}
+              style={styles.link}>
+              <Text style={styles.linkText}>{t.link.label}</Text>
+            </Pressable>
+          ) : null}
           <Text style={styles.dismiss}>{t.onPress ? '→' : '×'}</Text>
         </Pressable>
       ))}
@@ -157,4 +174,11 @@ const styles = StyleSheet.create({
   toastAction: { borderWidth: 1.5 },
   text: { flex: 1, fontSize: 12, color: '#111827' },
   dismiss: { color: '#6b7280', fontWeight: '700', fontSize: 14 },
+  link: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#16a34a',
+  },
+  linkText: { fontSize: 12, color: '#ffffff', fontWeight: '700' },
 });

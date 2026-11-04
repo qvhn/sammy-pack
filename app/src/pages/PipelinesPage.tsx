@@ -37,6 +37,7 @@ import { TriggersHead } from '../TriggersHead';
 import { RunsAsHead } from '../RunsAsHead';
 import { InputsHead } from '../InputsHead';
 import { RunInputsModal } from '../RunInputsModal';
+import { PipelineRunResult } from './RunResultCard';
 import { VersionHistoryPanel } from '../VersionHistoryPanel';
 import {
   budgetBannerText,
@@ -1776,6 +1777,16 @@ async function handleDuplicate() {
                 onChange={next => handleChange({ ...active, triggers: next })}
               />
               <RunsAsHead orchestration={active} onChange={handleChange} />
+              {/* The latest run's result — the PR it opened, the gate it is
+               *  waiting at, or why it failed — without a trip to Runs. */}
+              <View style={{ marginTop: 10, maxWidth: 920 }}>
+                <PipelineRunResult
+                  orchestrationName={active.name}
+                  onViewRun={() => onNavigate?.('runs')}
+                  onRunAgain={budget?.blocked ? undefined : () => setPendingRun(active)}
+                  onRetried={() => onNavigate?.('runs')}
+                />
+              </View>
             </View>
           )}
 

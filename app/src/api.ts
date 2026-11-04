@@ -189,6 +189,24 @@ export async function previewOrchestration(
  *  POST /api/repos/clone would put one. Local workspace only. */
 export type RepoLocation = { url: string; local: string | null; cloneTo: string | null };
 
+/** Decide the lock gate a server-owned run is paused at (POST
+ *  /api/runs/:id/gate). Throws with the server's message when refused. */
+export async function decideGate(
+  runId: string,
+  decision: 'approve' | 'reject' | 'request-changes',
+  message?: string,
+): Promise<void> {
+  const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/gate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, message }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${res.status} ${body}`.trim());
+  }
+}
+
 export async function locateRepo(url: string): Promise<RepoLocation> {
   const res = await fetch(`/api/repos/locate?url=${encodeURIComponent(url)}`);
   return json<RepoLocation>(res);

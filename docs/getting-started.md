@@ -65,8 +65,15 @@ model in the run view. Other good starters: `fanout-summarize` (parallel map),
 Every run — live or historical — lives on the **Runs** page:
 
 - **Stream** — phases and deltas arrive over SSE; reconnect-safe.
+- **Result** — a settled run opens with what it produced: the best link its
+  steps wrote (a pull request first, then a merge request, an issue, any other
+  link) with **Open ↗**, the branch it worked on, and the last step's answer.
+  A failed run says which step failed and why, with **Retry from** the last
+  finished step. The same card sits above the canvas on the Pipelines page for
+  the pipeline's latest run, where it also decides a waiting gate; a run that
+  finishes while you are elsewhere pops a notice with the link.
 - **Approve** — a `lock: true` phase pauses the run (amber status) until you
-  approve it, here or in the Pipelines run dock.
+  approve it, here or on the Pipelines page.
 - **Pause / resume** — resume re-runs from the last checkpoint, skip-replaying
   completed phases at zero tokens.
 - **Cancel** — aborts the SDK subprocess mid-call.
