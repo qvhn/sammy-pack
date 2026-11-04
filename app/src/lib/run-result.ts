@@ -424,6 +424,26 @@ export function linkKindLabel(kind: ResultLinkKind): string {
   }
 }
 
+/** An agent's markdown as plain text for the card's folded box: emphasis,
+ *  inline-code and heading markers go, a link keeps its text, a code fence
+ *  keeps its lines. Lists and line breaks stay — the box folds by lines.
+ *  Also parts two messages a session leg ran together ("…PR.**Run
+ *  complete.**"), where a sentence's end touches bold text. */
+export function displayText(md: string): string {
+  return md
+    .replace(/([.!?])(?=\*\*[A-Z])/g, '$1\n\n')
+    .replace(/^\s*```[^\n]*$/gm, '')
+    .replace(/\[([^\]\n]+)\]\((?:https?:\/\/|mailto:)[^)\s]*\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+    .replace(/__([^_\n]+?)__/g, '$1')
+    .replace(/(^|[^\w*])\*(?!\s)([^*\n]+?)\*(?!\w)/g, '$1$2')
+    .replace(/(^|[^\w_])_(?!\s)([^_\n]+?)_(?!\w)/g, '$1$2')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function formatDuration(ms: number): string {
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s}s`;

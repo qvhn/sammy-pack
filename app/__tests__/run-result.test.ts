@@ -12,6 +12,7 @@ import {
   collectLinks,
   countSteps,
   deriveRunResult,
+  displayText,
   linksIn,
   type RunLike,
 } from '../src/lib/run-result';
@@ -248,6 +249,41 @@ describe('links', () => {
     expect(classify('http://localhost:3000/page.html', 'p')).toBeNull();
     expect(classify('http://127.0.0.1:8080/', 'p')).toBeNull();
     expect(classify(`https://example.com/${'x'.repeat(80)}`, 'p')!.ref.length).toBeLessThanOrEqual(48);
+  });
+});
+
+describe('displayText', () => {
+  it('drops emphasis, inline-code and heading markers; a link keeps its text', () => {
+    expect(
+      displayText('## Verdict\nThe verdict is **ship it**, see `src/a.js` and _notes_.\n- **PR:** [acme/web#1](https://github.com/acme/web/pull/1)'),
+    ).toBe('Verdict\nThe verdict is ship it, see src/a.js and notes.\n- PR: acme/web#1');
+  });
+
+  it('leaves words with underscores and arithmetic alone, and keeps code lines', () => {
+    expect(displayText('snake_case_name, 2*3*4 and *emphasis*')).toBe('snake_case_name, 2*3*4 and emphasis');
+    expect(displayText('```js\nconst a = 1;\n```')).toBe('const a = 1;');
+  });
+
+  it('parts two messages a session leg ran together at bold text', () => {
+    expect(displayText('Pushed the PR.**Run complete.** Done.')).toBe('Pushed the PR.\n\nRun complete. Done.');
+  });
+});
+
+describe('a failed run keeps what its steps produced', () => {
+  it('finds the PR a step opened before a later step failed', () => {
+    const r = deriveRunResult({
+      status: 'error',
+      startedAt: 0,
+      endedAt: 1,
+      events: [
+        start('open-pr'),
+        end('open-pr', 'Opened https://github.com/acme/app/pull/8'),
+        start('notify'),
+        ev({ type: 'phase-error', phaseName: 'notify', error: 'webhook refused' }),
+      ],
+    });
+    expect(r).toMatchObject({ state: 'failed', failedPhase: 'notify' });
+    expect(r.hero?.ref).toBe('acme/app #8');
   });
 });
 

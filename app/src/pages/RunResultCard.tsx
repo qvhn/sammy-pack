@@ -26,6 +26,7 @@ import {
   deriveRunResult,
   formatCost,
   formatDuration,
+  displayText,
   linkKindLabel,
   type ResultLink,
   type RunResult,
@@ -82,6 +83,7 @@ export function RunResultCard({
             meta={meta(result)}
             onDismiss={onDismiss}
           />
+          {result.hero && <Hero link={result.hero} neutral />}
           {(onViewRun || onRunAgain) && (
             <Actions>
               {onViewRun && <Button label="View run" onPress={onViewRun} />}
@@ -276,7 +278,7 @@ function FinishedCard({
           ))}
         </View>
       )}
-      {result.hero && <Hero link={result.hero} />}
+      {result.hero && <Hero link={result.hero} neutral={degraded} />}
       <Chips>
         {result.branches.map(b => (
           <Chip key={b} label="Branch" value={b} />
@@ -331,6 +333,8 @@ function FailedCard({
           </Text>
         </View>
       ) : null}
+      {/* A step may have opened the PR before a later one failed. */}
+      {result.hero && <Hero link={result.hero} neutral />}
       <Chips>
         {result.doneSteps.length > 0 && (
           <Chip label="Done" value={result.doneSteps.join(', ')} />
@@ -522,21 +526,25 @@ function openLink(url: string) {
   Linking.openURL(url).catch(() => undefined);
 }
 
-function Hero({ link }: { link: ResultLink }) {
+/** The run's main result. Green when the run finished cleanly; neutral when
+ *  it didn't — the link is still real, the run around it wasn't a success. */
+function Hero({ link, neutral = false }: { link: ResultLink; neutral?: boolean }) {
   const icon = link.kind === 'pull-request' || link.kind === 'merge-request' ? '⇡' : link.kind === 'issue' ? '◎' : '↗';
   return (
-    <View style={styles.hero}>
-      <View style={styles.heroIcon}>
+    <View testID="result-hero" style={[styles.hero, neutral && styles.heroNeutral]}>
+      <View style={[styles.heroIcon, neutral && styles.heroIconNeutral]}>
         <Text style={styles.heroIconText}>{icon}</Text>
       </View>
       <View style={styles.heroBody}>
-        <Text style={styles.heroKind}>{linkKindLabel(link.kind).toUpperCase()}</Text>
+        <Text style={[styles.heroKind, neutral && styles.heroKindNeutral]}>
+          {linkKindLabel(link.kind).toUpperCase()}
+        </Text>
         <Text style={styles.heroTitle} numberOfLines={1}>
           {link.title ?? link.ref}
           {link.title ? <Text style={styles.heroRef}>{`  ${link.ref}`}</Text> : null}
         </Text>
       </View>
-      <Button label="Open ↗" kind="green" onPress={() => openLink(link.url)} />
+      <Button label="Open ↗" kind={neutral ? 'plain' : 'green'} onPress={() => openLink(link.url)} />
     </View>
   );
 }
@@ -581,7 +589,10 @@ function OutputBox({
 }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const long = text.split('\n').length > folded || text.length > folded * 90;
+  // Shown without markdown's markers (the box folds by lines, so it stays
+  // plain text); Copy still hands over the original.
+  const shown = useMemo(() => displayText(text), [text]);
+  const long = shown.split('\n').length > folded || shown.length > folded * 90;
   const copy = () => {
     const nav = (globalThis as { navigator?: { clipboard?: { writeText(t: string): Promise<void> } } })
       .navigator;
@@ -602,7 +613,7 @@ function OutputBox({
       </View>
       <View style={styles.outputBody}>
         <Text style={styles.outputText} numberOfLines={open ? undefined : folded} selectable>
-          {text.trim()}
+          {shown}
         </Text>
       </View>
       {long && (
@@ -718,6 +729,9 @@ const styles = StyleSheet.create({
   heroIconText: { color: '#ffffff', fontWeight: '700', fontSize: 15 },
   heroBody: { flex: 1, minWidth: 0 },
   heroKind: { fontSize: 11, fontWeight: '700', color: '#15803d', letterSpacing: 0.6 },
+  heroNeutral: { borderColor: '#e5e7eb', backgroundColor: '#f9fafb' },
+  heroIconNeutral: { backgroundColor: '#6b7280' },
+  heroKindNeutral: { color: '#4b5563' },
   heroTitle: { fontSize: 15, fontWeight: '600', color: '#111827' },
   heroRef: { fontSize: 13, fontWeight: '500', color: '#6b7280' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
