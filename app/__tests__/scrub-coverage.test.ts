@@ -89,6 +89,9 @@ const STRUCTURAL_BY_VARIANT: Record<string, string[]> = {
   // from the orchestration file (structural, like phaseName); the session id
   // is a UUID the engine minted and `cwd` the run's working directory.
   'harness-start': ['skill', 'engineKind', 'gate', 'group', 'section', 'loop', 'sessionId', 'cwd'],
+  // phase-session: the SDK's session UUID and the agent's working directory —
+  // what `claude --resume` needs verbatim (a pattern pass could mangle the id).
+  'phase-session': ['sessionId', 'cwd'],
 };
 
 /** Field names that are free text by their nature and must be scrubbed even

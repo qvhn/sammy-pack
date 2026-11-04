@@ -9,7 +9,12 @@ import type { HarnessFollow } from '../types';
 export type HarnessSettings = {
   /** null = the built-in default, strict. */
   follow: HarnessFollow | null;
+  /** The app "open in a terminal" uses; null = cmux when installed, else Terminal. */
+  terminal?: 'cmux' | 'terminal' | null;
 };
+
+/** Whether the server opened a window, in which app, or why not. */
+export type TerminalOpened = { opened: boolean; app?: string; reason?: string };
 
 export async function getHarnessSettings(): Promise<HarnessSettings> {
   const res = await fetch('/api/harness/settings');
@@ -17,7 +22,7 @@ export async function getHarnessSettings(): Promise<HarnessSettings> {
   return (await res.json()) as HarnessSettings;
 }
 
-export async function saveHarnessSettings(settings: HarnessSettings): Promise<HarnessSettings> {
+export async function saveHarnessSettings(settings: Partial<HarnessSettings>): Promise<HarnessSettings> {
   const res = await fetch('/api/harness/settings', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -52,14 +57,31 @@ export async function getRunTerminal(runId: string): Promise<{ live: boolean; co
 export async function takeOverInTerminal(
   runId: string,
   open: boolean,
-): Promise<{ live: boolean; command: string; opened?: { opened: boolean; reason?: string } }> {
+): Promise<{ live: boolean; command: string; opened?: TerminalOpened }> {
   const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/terminal`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ open }),
   });
   if (!res.ok) throw await requestFailure('Taking the run over', res);
-  return (await res.json()) as { live: boolean; command: string; opened?: { opened: boolean; reason?: string } };
+  return (await res.json()) as { live: boolean; command: string; opened?: TerminalOpened };
+}
+
+/** Continue a pipeline run's agent step in a terminal: `phase`'s Claude Code
+ *  session, or else the most recent step's, forked so the run is unaffected.
+ *  `open` also opens the window (when the server is this machine). */
+export async function continueStepInTerminal(
+  runId: string,
+  phase: string | undefined,
+  open: boolean,
+): Promise<{ command: string; phase: string; opened?: TerminalOpened }> {
+  const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/terminal`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ open, ...(phase ? { phase } : {}) }),
+  });
+  if (!res.ok) throw await requestFailure('Opening the step in a terminal', res);
+  return (await res.json()) as { command: string; phase: string; opened?: TerminalOpened };
 }
 
 /** End the terminal's leg; the server's agent continues the session. */

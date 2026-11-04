@@ -21,6 +21,7 @@ import { useToast } from '../store/toast';
 import { type Node } from '../types';
 import { RunInputsModal } from '../RunInputsModal';
 import { HarnessPanel } from './HarnessPanel';
+import { ContinueInTerminalButton, canContinueInTerminal } from './ContinueInTerminal';
 import { getAuthMode } from '../store/apiKey';
 import { ArtifactViewer } from './ArtifactViewer';
 import { Card, Hint, Page } from './Page';
@@ -740,6 +741,12 @@ function RunDetailCard({
     return { phaseName, summary };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.eventVersion, run.events, run.status]);
+  // A gate is decided here first; taking the run over must not skip it.
+  const terminalOk = useMemo(
+    () => !serverGate && canContinueInTerminal(run),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [serverGate, run.eventVersion, run.events, run.status],
+  );
   const [showCompareList, setShowCompareList] = useState(false);
   const [showForkList, setShowForkList] = useState(false);
   // Completed leaf phases — the valid fork points. A leaf is a phase
@@ -837,6 +844,7 @@ function RunDetailCard({
               )}
             </View>
           )}
+          {terminalOk && <ContinueInTerminalButton run={run} />}
           {isActive ? (
             run.status === 'paused' ? (
               // Server-owned run snapshot+paused at a lock-gated phase.
@@ -939,7 +947,7 @@ function RunDetailCard({
         {...(serverGate ? { onApproveGate: () => onGate('approve') } : {})}
       />
       <ArtifactList run={run} />
-      <BlockList events={run.events} version={run.eventVersion} />
+      <BlockList events={run.events} version={run.eventVersion} run={run} />
       {isActive && !onServer && activePhase && !isProgramPhase(phaseAgentPath(run.events, activePhase)) && (
         <ChatInput phaseName={activePhase} paused={paused} onSend={onChat} />
       )}
@@ -1530,6 +1538,8 @@ export type Block = { ts?: number } & (
       durationMs?: number;
       /** Not run now — a fork replayed its earlier output. */
       replayed?: boolean;
+      /** Ran in a Claude Code session, so it can continue in a terminal. */
+      session?: boolean;
     }
 );
 
@@ -1562,6 +1572,11 @@ export function groupEvents(events: RunEvent[]): Block[] {
         closeOpenPhases();
         blocks.push({ kind: 'meta', tone: 'dim', text: '▶ run started' });
         break;
+      case 'phase-session': {
+        const open = findOpenPhase(e.phaseName);
+        if (open && open.kind === 'phase') open.session = true;
+        break;
+      }
       case 'run-end':
         closeOpenPhases();
         blocks.push({ kind: 'meta', tone: 'ok', text: '■ run complete' });
@@ -1984,7 +1999,7 @@ function formatNum(n: number): string {
   return Math.round(n).toLocaleString();
 }
 
-function BlockList({ events, version }: { events: RunEvent[]; version: number }) {
+function BlockList({ events, version, run }: { events: RunEvent[]; version: number; run?: Run }) {
   // events is mutated in place by the runs store — see runs.tsx. memoize
   // on `version` so groupEvents re-runs when new events arrive but skips
   // when only sibling props change.
@@ -2010,24 +2025,24 @@ function BlockList({ events, version }: { events: RunEvent[]; version: number })
       contentContainerStyle={styles.blockList}
       nestedScrollEnabled>
       {blocks.map((b, i) => (
-        <BlockView key={i} block={b} />
+        <BlockView key={i} block={b} run={run} />
       ))}
     </ScrollView>
   );
 }
 
-function BlockView({ block }: { block: Block }) {
+function BlockView({ block, run }: { block: Block; run?: Run }) {
   return (
     <View style={styles.msgRow}>
       <Text style={styles.timeTag} selectable>
         {block.ts != null ? formatTime(block.ts) : ''}
       </Text>
-      <View style={styles.msgBody}>{renderBlockInner(block)}</View>
+      <View style={styles.msgBody}>{renderBlockInner(block, run)}</View>
     </View>
   );
 }
 
-function renderBlockInner(block: Block) {
+function renderBlockInner(block: Block, run?: Run) {
   switch (block.kind) {
     case 'meta':
       return <MetaRow tone={block.tone} text={block.text} detail={block.detail} />;
@@ -2047,14 +2062,17 @@ function renderBlockInner(block: Block) {
         <MetaRow tone="dim" text={`╚ end ${block.compositeKind} "${block.name}"`} />
       );
     case 'phase':
-      return <PhaseBlock block={block} />;
+      return <PhaseBlock block={block} run={run} />;
   }
 }
 
 function PhaseBlock({
   block,
+  run,
 }: {
   block: Extract<Block, { kind: 'phase' }>;
+  /** The run, for "Continue in terminal" on an agent step. */
+  run?: Run;
 }) {
   const tone =
     block.status === 'error'
@@ -2101,6 +2119,9 @@ function PhaseBlock({
       </View>
       {block.reason ? <Text style={styles.subtle}>{block.reason}</Text> : null}
       {block.error ? <Text style={styles.errorText}>{block.error}</Text> : null}
+      {run && block.session && !block.replayed ? (
+        <ContinueInTerminalButton run={run} phase={block.name} compact />
+      ) : null}
       {block.text ? (
         <OutputBlock text={block.text} markdown={!isProgramPhase(block.agentPath)} />
       ) : null}

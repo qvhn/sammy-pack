@@ -70,7 +70,7 @@ import {
   fireTerminalNotify,
   isGatePause,
 } from './src/server/notify';
-import { orchestrationUsesCodeRun } from './src/llm/executor';
+import { orchestrationUsesCodeRun, type RunEvent } from './src/llm/executor';
 import {
   previewOrchestration,
   type PreviewFinding,
@@ -138,6 +138,7 @@ import {
 } from './src/trigger-kinds';
 import {
   WEBHOOK_PROVIDER_NAMES,
+  type HarnessFollow,
   type Node,
   type OrchestrationConcurrency,
   type Trigger,
@@ -170,9 +171,12 @@ import {
 } from './src/server/budget-store';
 import {
   harnessSettingsFile,
+  isTerminalApp,
   readHarnessSettingsSync,
+  type TerminalApp,
   writeHarnessSettings,
 } from './src/server/harness-settings';
+import { pickStepSession, stepResumeCommand } from './src/lib/step-session';
 import { harnessTerminalCommand, isHarnessFollow, resolveFollow } from './src/llm/harness';
 import {
   existingHarnessControl,
@@ -8546,13 +8550,56 @@ export async function mountSammyApi(
         //      server's agent continues the same session.
         // One driver at a time; the terminal's step tools are served only on
         // 127.0.0.1 and only while its leg lasts (serveHarnessToolsHttp).
+        //
+        // A pipeline run has no single agent to take over, so POST
+        // /terminal { phase?, open? } there continues ONE agent step's
+        // conversation instead — the named step's, else the most recent —
+        // forked, so the run itself carries on (or stays finished) as it was.
         if (action === 'terminal' || action === 'handback') {
           const method = (req.method ?? 'GET').toUpperCase();
           const stored = await store.getRun(id, extractOwnerId(req));
           if (!stored) return sendError(res, 404, 'Run not found');
           const snap = stored.orchestrationSnapshot as Node | null;
-          if (snap?.execution !== 'harness') {
-            return sendError(res, 409, 'Only a harness run can be driven from a terminal.');
+          /** Open `command` in the chosen terminal — for local requests only:
+           *  a window opened on a remote server's screen helps no one. */
+          const openLocally = async (req2: typeof req, command: string, title: string) => {
+            const remote = req2.socket.remoteAddress ?? '';
+            return /^(127\.|::1$|::ffff:127\.)/.test(remote)
+              ? await openTerminalWith(command, { app: readHarnessSettingsSync(harnessFile).terminal, title })
+              : { opened: false, reason: 'the server is on another machine — run the command there' };
+          };
+          let body: { open?: unknown; peek?: unknown; phase?: unknown } = {};
+          if (method === 'POST' && action === 'terminal') {
+            try {
+              const raw = await readBody(req);
+              body = raw.trim() ? JSON.parse(raw) : {};
+            } catch {
+              return sendError(res, 400, 'Invalid JSON');
+            }
+          }
+          const phase = typeof body.phase === 'string' && body.phase ? body.phase : undefined;
+          // A named step is that step's own session, in a harness run too
+          // (its map / route / … steps give their agents sessions of their own).
+          if (snap?.execution !== 'harness' || phase) {
+            if (action === 'handback') return sendError(res, 409, 'Only a harness run can be handed back.');
+            if (method === 'GET') return sendJson(res, 200, { live: false });
+            if (method !== 'POST') return sendError(res, 405, 'Method not allowed');
+            const session = pickStepSession(stored.events as RunEvent[], phase);
+            if (!session) {
+              return sendError(
+                res,
+                409,
+                phase
+                  ? `Step "${phase}" has no Claude Code session to continue.`
+                  : 'No agent step in this run has a Claude Code session to continue yet.',
+              );
+            }
+            const command = stepResumeCommand(session);
+            const opened =
+              body.open === true
+                ? await openLocally(req, command, `${stored.orchestrationName} · ${session.phaseName}`)
+                : undefined;
+            return sendJson(res, 200, { live: false, command, phase: session.phaseName, ...(opened ? { opened } : {}) });
           }
           const liveCommand = (): string | null => {
             const t = existingHarnessControl(id)?.terminal;
@@ -8573,13 +8620,6 @@ export async function mountSammyApi(
             return sendJson(res, 200, { live: existingHarnessControl(id)?.terminal != null });
           }
           if (method !== 'POST') return sendError(res, 405, 'Method not allowed');
-          let body: { open?: unknown; peek?: unknown } = {};
-          try {
-            const raw = await readBody(req);
-            body = raw.trim() ? JSON.parse(raw) : {};
-          } catch {
-            return sendError(res, 400, 'Invalid JSON');
-          }
           const control = harnessControlFor(id);
           // `peek`: the live leg's command if there is one — never a takeover.
           if (body.peek === true && !control.terminal) return sendJson(res, 200, { live: false, command: null });
@@ -8641,13 +8681,7 @@ export async function mountSammyApi(
             }
           }
           const command = liveCommand()!;
-          let opened: { opened: boolean; reason?: string } | undefined;
-          if (body.open === true) {
-            const remote = req.socket.remoteAddress ?? '';
-            opened = /^(127\.|::1$|::ffff:127\.)/.test(remote)
-              ? await openTerminalWith(command)
-              : { opened: false, reason: 'the server is on another machine — run the command there' };
-          }
+          const opened = body.open === true ? await openLocally(req, command, stored.orchestrationName) : undefined;
           return sendJson(res, 200, { live: true, command, ...(opened ? { opened } : {}) });
         }
 
@@ -9943,10 +9977,11 @@ export async function mountSammyApi(
       // cap actually enforceable — POST /api/runs/start refuses a
       // blocked run server-side, instead of the cap being a greyed-out
       // button a direct API call would sail straight past.
-      // GET /api/harness/settings → { follow } — the workspace default
-      //                              strictness for harness runs (null =
-      //                              the built-in `strict`)
-      // PUT /api/harness/settings → write it (same shape)
+      // GET /api/harness/settings → { follow, terminal } — the workspace
+      //                              default strictness for harness runs
+      //                              (null = the built-in `strict`) and the
+      //                              terminal app (null = cmux if installed)
+      // PUT /api/harness/settings → write the keys it names (same shape)
       // Server-side so a harness run started by a trigger or the API follows
       // the same default as one started from the Run dialog.
       server.middlewares.use('/api/harness/settings', async (req, res) => {
@@ -9960,11 +9995,21 @@ export async function mountSammyApi(
             } catch {
               return sendError(res, 400, 'Invalid JSON body');
             }
-            const follow = (parsed as { follow?: unknown } | null)?.follow;
-            if (follow !== null && !isHarnessFollow(follow)) {
+            const patch = (parsed && typeof parsed === 'object' ? parsed : {}) as { follow?: unknown; terminal?: unknown };
+            if ('follow' in patch && patch.follow !== null && !isHarnessFollow(patch.follow)) {
               return sendError(res, 400, 'follow must be "strict", "loose", "advisory" or null');
             }
-            return sendJson(res, 200, await writeHarnessSettings(harnessFile, { follow }));
+            if ('terminal' in patch && patch.terminal !== null && !isTerminalApp(patch.terminal)) {
+              return sendError(res, 400, 'terminal must be "cmux", "terminal" or null');
+            }
+            return sendJson(
+              res,
+              200,
+              await writeHarnessSettings(harnessFile, {
+                ...('follow' in patch ? { follow: patch.follow as HarnessFollow | null } : {}),
+                ...('terminal' in patch ? { terminal: patch.terminal as TerminalApp | null } : {}),
+              }),
+            );
           }
           return sendError(res, 405, 'Method not allowed');
         } catch (err) {

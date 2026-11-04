@@ -21,6 +21,13 @@ export type StreamEvent =
   | { type: 'tool-use'; toolUseId: string; name: string; input: unknown }
   | { type: 'tool-result'; toolUseId: string; output: string; isError: boolean }
   | {
+      /** The Claude Code session the call runs in (see sdk-stream's twin).
+       *  The executor forwards it as `phase-session`. */
+      type: 'session';
+      sessionId: string;
+      cwd: string;
+    }
+  | {
       /** Throttled liveness beat from the SDK stream (see sdk-stream's
        *  SdkStreamChunk twin): SDK messages are flowing but none produced
        *  another event — thinking, streamed tool arguments, block

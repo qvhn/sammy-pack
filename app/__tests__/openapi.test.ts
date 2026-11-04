@@ -394,7 +394,7 @@ describe('OpenAPI document — documented routes conform to the live server', ()
     }
   });
 
-  test('harness settings round-trip, and a pipeline run cannot be taken over in a terminal', async () => {
+  test('harness settings round-trip, and a pipeline run continues a step in a terminal instead of a takeover', async () => {
     const before = await getJson<AnyObj>(`${m.baseUrl}/api/harness/settings`);
     expectConforms(before, documentedResponse('/api/harness/settings', 'get', '200'), 'GET /api/harness/settings');
     expect(before.follow).toBeNull();
@@ -404,10 +404,43 @@ describe('OpenAPI document — documented routes conform to the live server', ()
     expect(put.body.follow).toBe('loose');
     expect((await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: 'sloppy' })).status).toBe(400);
     expect((await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: null })).body.follow).toBeNull();
+    // The terminal choice is its own key: writing it keeps the strictness.
+    await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: 'loose' });
+    const term = await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { terminal: 'cmux' });
+    expect(term.body).toEqual({ follow: 'loose', terminal: 'cmux' });
+    expectConforms(term.body, documentedResponse('/api/harness/settings', 'put', '200'), 'PUT /api/harness/settings');
+    expect((await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { terminal: 'xterm' })).status).toBe(400);
+    await putJson<AnyObj>(`${m.baseUrl}/api/harness/settings`, { follow: null, terminal: null });
 
+    // A pipeline run is never "driven" from a terminal…
     const start = await postJson<{ id: string }>(`${m.baseUrl}/api/runs/start`, { orchestrationName: 'echo' });
-    const res = await fetch(`${m.baseUrl}/api/runs/${start.body.id}/terminal`);
-    expect(res.status).toBe(409);
+    expect(await getJson<AnyObj>(`${m.baseUrl}/api/runs/${start.body.id}/terminal`)).toEqual({ live: false });
+    // …it continues an agent step's session, and refuses when there is none.
+    expect((await postJson<AnyObj>(`${m.baseUrl}/api/runs/${start.body.id}/terminal`, {})).status).toBe(409);
+    await postJson(`${m.baseUrl}/api/runs`, {
+      id: 'with-sessions',
+      orchestrationName: 'echo',
+      status: 'done',
+      events: [
+        { type: 'run-start', orchestrationName: 'echo', ts: 1 },
+        { type: 'phase-start', phaseName: 'plan', ts: 2 },
+        { type: 'phase-session', phaseName: 'plan', sessionId: 'sess-plan', cwd: '/tmp/w', ts: 3 },
+        { type: 'phase-start', phaseName: 'build', ts: 4 },
+        { type: 'phase-session', phaseName: 'build', sessionId: 'sess-build', cwd: '/tmp/w', ts: 5 },
+      ],
+    });
+    const latest = await postJson<AnyObj>(`${m.baseUrl}/api/runs/with-sessions/terminal`, { open: false });
+    expect(latest.status).toBe(200);
+    expectConforms(latest.body, documentedResponse('/api/runs/{id}/terminal', 'post', '200'), 'POST /api/runs/{id}/terminal');
+    expect(latest.body).toEqual({
+      live: false,
+      phase: 'build',
+      command: "mkdir -p '/tmp/w' && cd '/tmp/w' && claude --resume 'sess-build' --fork-session",
+    });
+    const named = await postJson<AnyObj>(`${m.baseUrl}/api/runs/with-sessions/terminal`, { phase: 'plan' });
+    expect(named.body.command).toContain("--resume 'sess-plan'");
+    expect((await postJson<AnyObj>(`${m.baseUrl}/api/runs/with-sessions/terminal`, { phase: 'nope' })).status).toBe(409);
+    expect((await postJson<AnyObj>(`${m.baseUrl}/api/runs/with-sessions/handback`, {})).status).toBe(409);
   });
 
   test('GET /api/deliveries/stats conforms (and is documented as owner-scoped)', async () => {

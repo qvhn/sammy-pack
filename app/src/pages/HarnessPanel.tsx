@@ -86,7 +86,7 @@ export function HarnessPanel({
       const r = await takeOverInTerminal(run.id, open);
       setLiveCommand(r.command);
       if (r.opened && !r.opened.opened) setNote(`Couldn't open a terminal: ${r.opened.reason}. Copy the command instead.`);
-      else if (r.opened?.opened) setNote('Opened a terminal on the server\'s machine.');
+      else if (r.opened?.opened) setNote(`Opened ${r.opened.app ?? 'a terminal'} on the server's machine.`);
     } catch (e) {
       // Right after a gate approval the run is still starting its next leg.
       if (retries > 0 && /409/.test((e as Error).message)) {

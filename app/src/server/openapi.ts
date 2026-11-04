@@ -480,7 +480,7 @@ export function buildOpenApiDoc(): object {
       '/api/runs/{id}/terminal': {
         get: {
           tags: ['runs'],
-          summary: 'Whether a terminal is driving this harness run',
+          summary: 'Whether a terminal is driving this harness run (always false for a pipeline run)',
           description:
             'Only whether — the command that opens the terminal holds the leg’s ' +
             'token, so it is returned by the POST (`peek: true` reads it without ' +
@@ -493,12 +493,11 @@ export function buildOpenApiDoc(): object {
               required: ['live'],
             }),
             '404': errorResponse('Run not found.'),
-            '409': errorResponse('Not a harness run.'),
           },
         },
         post: {
           tags: ['runs'],
-          summary: 'Take a harness run over in a terminal',
+          summary: 'Take a harness run over in a terminal, or continue a pipeline step’s conversation',
           description:
             'One driver at a time. A running harness run ends its server agent’s ' +
             'session leg (after any engine step in progress) and the next leg is ' +
@@ -507,7 +506,12 @@ export function buildOpenApiDoc(): object {
             '`open: true` also opens a terminal window on the server’s machine ' +
             '(local requests only). The terminal leg ends when the run finishes, ' +
             'stops at a gate, is handed back, or no step tool is called for ' +
-            'SAMMY_HARNESS_TERMINAL_IDLE_SEC (default 30 min — the run then pauses).',
+            'SAMMY_HARNESS_TERMINAL_IDLE_SEC (default 30 min — the run then pauses). ' +
+            'On a pipeline run there is no single agent to take over: the reply is ' +
+            'the command that continues one agent step’s Claude Code session — ' +
+            '`phase`, else the most recent step that has one — as a fork, so the ' +
+            'run is unaffected (`live` is false). Windows open in the app chosen ' +
+            'in the harness settings’ `terminal`.',
           security: mutatingSecurity,
           parameters: [runIdParam],
           requestBody: jsonBody({
@@ -515,24 +519,31 @@ export function buildOpenApiDoc(): object {
             properties: {
               open: { type: 'boolean' },
               peek: { type: 'boolean', description: 'Only read the live leg’s command; never take over.' },
+              phase: { type: 'string', description: 'Pipeline runs: the step whose session to continue.' },
             },
           }),
           responses: {
-            '200': jsonResponse('The terminal leg is live.', {
+            '200': jsonResponse('The terminal leg is live, or the step’s command.', {
               type: 'object',
               properties: {
                 live: { type: 'boolean' },
                 command: { type: 'string' },
+                phase: { type: 'string', description: 'Pipeline runs: the step the command continues.' },
                 opened: {
                   type: 'object',
-                  properties: { opened: { type: 'boolean' }, reason: { type: 'string' } },
+                  properties: {
+                    opened: { type: 'boolean' },
+                    app: { type: 'string', description: 'The app that opened, e.g. cmux or Terminal.' },
+                    reason: { type: 'string' },
+                  },
                 },
               },
               required: ['live', 'command'],
             }),
             '404': errorResponse('Run not found.'),
             '409': errorResponse(
-              'Not a harness run, waiting at a gate, finished, or not executing in this process.',
+              'A harness run waiting at a gate, finished, or not executing in this process; ' +
+                'or a pipeline run with no agent step session yet.',
             ),
             '504': errorResponse('The run did not hand over within a minute.'),
           },
@@ -572,7 +583,7 @@ export function buildOpenApiDoc(): object {
           requestBody: jsonBody(ref('HarnessSettings')),
           responses: {
             '200': jsonResponse('The defaults as stored.', ref('HarnessSettings')),
-            '400': errorResponse('Invalid JSON, or `follow` is not strict | loose | advisory | null.'),
+            '400': errorResponse('Invalid JSON, `follow` not strict | loose | advisory | null, or `terminal` not cmux | terminal | null.'),
           },
         },
       },
@@ -1883,6 +1894,11 @@ export function buildOpenApiDoc(): object {
           type: 'object',
           properties: {
             follow: { type: ['string', 'null'], enum: ['strict', 'loose', 'advisory', null] },
+            terminal: {
+              type: ['string', 'null'],
+              enum: ['cmux', 'terminal', null],
+              description: 'The app a takeover opens on macOS; null = cmux when installed, else Terminal.',
+            },
           },
           required: ['follow'],
         },

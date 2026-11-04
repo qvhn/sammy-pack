@@ -95,6 +95,20 @@ A terminal that calls no step tool for `SAMMY_HARNESS_TERMINAL_IDLE_SEC`
 In the terminal, Claude Code's own permissions govern its tools — the per-step
 tool limits are the server agent's.
 
+**Continue in terminal** in the run's header does the same in one press: it
+takes the run over and opens the window. Which app opens is set in **Settings
+→ Harness runs → Terminal app**: cmux (a new workspace named after the run)
+when it is installed, otherwise Terminal; on Linux, the desktop's terminal.
+When the server is on another machine, the command is copied for you to paste.
+
+A pipeline run has no single agent to take over, so there the button continues
+one agent step's conversation instead — the latest step's from the header, or
+any step's from its own **Continue in terminal** link in the log. Each agent
+step records its Claude Code session (a `phase-session` event), and the command
+reopens it as a fork (`claude --resume <session> --fork-session`), so the run's
+record of the step stays as it was and nothing you do there feeds back into the
+run.
+
 ## Trade-offs
 
 - **One context.** Later steps know what earlier ones found without passing

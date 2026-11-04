@@ -142,6 +142,9 @@ export async function* streamClaudeCode({
           output: t.output ?? '',
           isError: t.isError === true,
         };
+      } else if (e.type === 'session') {
+        const s = e as { sessionId?: string; cwd?: string };
+        if (s.sessionId) yield { type: 'session', sessionId: s.sessionId, cwd: s.cwd ?? '' };
       } else if (e.type === 'done') {
         const u = (e as { usage?: Partial<Usage> }).usage ?? {};
         usage.inputTokens = u.inputTokens ?? 0;
