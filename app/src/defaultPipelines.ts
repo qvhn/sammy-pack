@@ -52,6 +52,7 @@ export const DEFAULT_PIPELINE_NAMES: ReadonlySet<string> = new Set([
   'sprint-delivery',
   'support-ticket-resolution',
   'ticket-to-pr',
+  'ticket-to-pr-basic',
   'ticket-triage',
 ]);
 

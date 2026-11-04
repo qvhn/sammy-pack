@@ -1,0 +1,99 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "ticket-to-pr-basic",
+  "description": "The simplest ticket-to-PR shape: implement the ticket in an isolated git worktree of your repository, review and QA the result in parallel, then open the PR after you approve. Review and QA read the same implementation and are merged into one verdict; you approve with that verdict in front of you, and the PR is not opened if it asked for changes. For a run that plans first, asks questions and loops until the change is ready, use ticket-to-pr.",
+  "lifecycle": {
+    "tags": [
+      "delivery",
+      "starter"
+    ]
+  },
+  "inputs": [
+    {
+      "name": "ticket",
+      "kind": "jira",
+      "required": true,
+      "description": "The work to do: a Jira key or link (the issue and its attachments are fetched through the Atlassian connection), a GitHub issue link, any other link, or just a description typed here."
+    },
+    {
+      "name": "repo",
+      "kind": "text",
+      "required": true,
+      "description": "The repository the change lands in: a local path, or its URL (a local clone is found, or the Run dialog offers to clone it). The run works in its own worktree on a fresh branch, never in your checkout."
+    }
+  ],
+  "phases": [
+    {
+      "name": "implement",
+      "agent": "agents/dev.md",
+      "as": "change",
+      "description": "Implement the ticket. Produces the change plus a short note on what was touched and why — both the reviewer and QA read this.",
+      "prompt": "Implement the change this ticket asks for.\n\n${ticket}\n\nYou are in a fresh git worktree of the repository at ${worktrees.repo.path}, on branch ${worktrees.repo.branch}. Work only inside that directory. Make the change there and commit it on that branch.\n\nReturn a short note: what you changed (files), what you deliberately did not, and anything a reviewer should look at first.",
+      "timeout": 1800,
+      "tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "Bash"
+      ]
+    },
+    {
+      "name": "checks",
+      "description": "Review and QA read the same change and disagree usefully: one judges whether the code should exist in this shape, the other whether it actually works. The merger reconciles them into one verdict.",
+      "converge": [
+        {
+          "name": "review",
+          "agent": "agents/review.md",
+          "prompt": "Ticket:\n\n${ticket}\n\nChange (in ${worktrees.repo.path}, branch ${worktrees.repo.branch}):\n\n${change}\n\nReview it: does it do what the ticket asked, is it the right shape, what would you send back. Be specific and terse — file and line where you can.",
+          "timeout": 900,
+          "tools": [
+            "Read",
+            "Glob",
+            "Grep",
+            "Bash"
+          ]
+        },
+        {
+          "name": "qa",
+          "agent": "agents/qa-runner.md",
+          "prompt": "Ticket (the acceptance criteria):\n\n${ticket}\n\nChange to validate (in ${worktrees.repo.path}, branch ${worktrees.repo.branch}):\n\n${change}\n\nExercise it and report PASS or FAIL with concrete evidence — what you ran, what you saw. A FAIL must name the case that fails.",
+          "timeout": 900,
+          "tools": [
+            "Read",
+            "Glob",
+            "Grep",
+            "Bash"
+          ]
+        }
+      ],
+      "merger": "agents/dev-lead.md",
+      "as": "verdict"
+    },
+    {
+      "name": "open-pr",
+      "agent": "agents/github-adapter.md",
+      "description": "Opens the PR. Locked, so you approve with the review and QA verdict in front of you; it is the only step with an effect outside this run.",
+      "prompt": "Open a pull request for the change below.\n\nTicket:\n\n${ticket}\n\nChange:\n\n${change}\n\nReview + QA verdict:\n\n${verdict}\n\nThe change is committed on branch ${worktrees.repo.branch} in ${worktrees.repo.path} (a worktree of the repository). Push it (`git push -u origin ${worktrees.repo.branch}`) and open the PR from it. Title it from the ticket. In the body, summarise the change, link the ticket, and quote the QA evidence. Do not open the PR if the verdict asked for changes — say so instead.",
+      "timeout": 600,
+      "tools": [
+        "Bash"
+      ],
+      "lock": true
+    }
+  ],
+  "worktrees": [
+    {
+      "name": "repo",
+      "repo": "${repo}"
+    }
+  ],
+  "sandbox": {
+    "deniedCommands": [
+      "git push --force",
+      "git push -f",
+      "git reset --hard"
+    ]
+  }
+}
