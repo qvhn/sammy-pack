@@ -14,7 +14,7 @@
  *  - cancelled: a grey line.
  *
  *  A settled card (finished, failed, cancelled) collapses to one line — the
- *  status, the main link with Open ↗, the time and cost — from its status;
+ *  status, the main link with Open ↗, the time and cost — from its header;
  *  the choice is kept for the cards that follow.
  *
  *  Everything shown comes from lib/run-result (derived from the run's events),
@@ -600,32 +600,16 @@ function Header({
   color: string;
   meta: string;
   collapsed?: boolean;
-  /** Collapse or expand the card; the status line becomes its toggle. */
+  /** Collapse or expand the card; the whole header row becomes its toggle. */
   onToggle?: () => void;
   onDismiss?: () => void;
   /** Shown between the status and the meta — the collapsed card's link. */
   children?: ReactNode;
 }) {
-  const status = (
+  const row = (
     <>
       {onToggle ? <Text style={styles.chevron}>{collapsed ? '▸' : '▾'}</Text> : null}
       <Text style={[styles.status, { color }]}>{label}</Text>
-    </>
-  );
-  return (
-    <View style={styles.header}>
-      {onToggle ? (
-        <Pressable
-          onPress={onToggle}
-          accessibilityRole="button"
-          accessibilityLabel={collapsed ? 'Expand result' : 'Collapse result'}
-          accessibilityState={{ expanded: !collapsed }}
-          style={styles.toggle}>
-          {status}
-        </Pressable>
-      ) : (
-        status
-      )}
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       {children}
       <View style={styles.spacer} />
@@ -639,7 +623,25 @@ function Header({
           <Text style={styles.dismiss}>×</Text>
         </Pressable>
       )}
-    </View>
+    </>
+  );
+  // The whole row toggles; the buttons in it (Open ↗, ×) keep their own press.
+  return onToggle ? (
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityLabel={collapsed ? 'Expand result' : 'Collapse result'}
+      accessibilityState={{ expanded: !collapsed }}
+      style={state => [
+        styles.header,
+        styles.headerToggle,
+        // `hovered` is react-native-web's addition to the press state.
+        (state as { hovered?: boolean }).hovered && styles.headerHover,
+      ]}>
+      {row}
+    </Pressable>
+  ) : (
+    <View style={styles.header}>{row}</View>
   );
 }
 
@@ -865,7 +867,9 @@ const styles = StyleSheet.create({
   cardCancelled: { borderLeftColor: '#9ca3af' },
   cardCollapsed: { paddingVertical: 9 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  toggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Bleeds into the card's padding so the press area reaches its edges.
+  headerToggle: { marginHorizontal: -10, marginVertical: -6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  headerHover: { backgroundColor: '#f3f4f6' },
   chevron: { fontSize: 15, color: '#374151', width: 14 },
   status: { fontSize: 15, fontWeight: '700' },
   compactLink: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },

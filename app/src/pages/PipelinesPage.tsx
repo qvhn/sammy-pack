@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -244,6 +245,10 @@ export function PipelinesPage({
     () => currentRoute().pipeline ?? rememberedPipeline(),
   );
   const [mode, setMode] = useState<ViewMode>('pipeline');
+  // The heads and the Result card scroll away with the flow below them; the
+  // flow keeps about a window's height so, scrolled down, it fills the screen.
+  const { height: windowHeight } = useWindowDimensions();
+  const flowMinHeight = Math.max(360, windowHeight - 140);
   // C.1 — vertical sidebar list w/ search. With ~5 pipelines the
   // horizontal pill strip was already cramped; sammy-pack is
   // designed to host dozens. Filter is case-insensitive substring
@@ -1767,6 +1772,7 @@ async function handleDuplicate() {
             )}
           </View>
 
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
           {/* The orchestration's entry point — shown above the flow in every
            *  view (Pipeline / Graph / Tree). Reads/writes orchestration.triggers.
            *  (Run inputs are authored from the ◇ Inputs button next to ▶ Run.) */}
@@ -1793,6 +1799,7 @@ async function handleDuplicate() {
           <View
             style={[
               styles.body,
+              { minHeight: flowMinHeight },
               mode !== 'graph' && showJson && { flexDirection: 'row', gap: 12 },
             ]}>
             <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
@@ -1861,6 +1868,7 @@ async function handleDuplicate() {
               </View>
             )}
           </View>
+          </ScrollView>
           {/* Talk to the running agent + approve lock gates without leaving
               the editor — shows only when the open orchestration has an
               active run. */}
