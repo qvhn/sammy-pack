@@ -13,6 +13,10 @@
  *  - running: a thin strip with the step running now;
  *  - cancelled: a grey line.
  *
+ *  A settled card (finished, failed, cancelled) collapses to one line — the
+ *  status, the main link with Open ↗, the time and cost — from its header;
+ *  the choice is kept for the cards that follow.
+ *
  *  Everything shown comes from lib/run-result (derived from the run's events),
  *  so the card works for runs recorded before it existed. The page decides
  *  which actions exist by passing their handlers. */
@@ -69,18 +73,33 @@ export function RunResultCard({
     [run, run.eventVersion, run.events, run.status, now],
   );
 
+  const [collapsed, toggle] = useCollapsed();
+
   switch (result.state) {
     case 'running':
       return <RunningStrip result={result} onViewRun={onViewRun} />;
     case 'waiting':
       return <WaitingCard run={run} result={result} onViewRun={onViewRun} onGate={onGate} />;
     case 'cancelled':
+      if (collapsed) {
+        return (
+          <CollapsedCard
+            label="⊘ Cancelled"
+            color={colors.grey}
+            cardStyle={styles.cardCancelled}
+            result={result}
+            onToggle={toggle}
+            onDismiss={onDismiss}
+          />
+        );
+      }
       return (
         <View style={[styles.card, styles.cardCancelled]}>
           <Header
             label="⊘ Cancelled"
             color={colors.grey}
             meta={meta(result)}
+            onToggle={toggle}
             onDismiss={onDismiss}
           />
           {result.hero && <Hero link={result.hero} neutral />}
@@ -98,6 +117,8 @@ export function RunResultCard({
           run={run}
           result={result}
           terminal={terminal}
+          collapsed={collapsed}
+          onToggle={toggle}
           onDismiss={onDismiss}
           onViewRun={onViewRun}
           onRetryFrom={onRetryFrom}
@@ -109,6 +130,8 @@ export function RunResultCard({
           run={run}
           result={result}
           terminal={terminal}
+          collapsed={collapsed}
+          onToggle={toggle}
           onDismiss={onDismiss}
           onViewRun={onViewRun}
           onRunAgain={onRunAgain}
@@ -141,6 +164,34 @@ function writeDismissed(ids: string[]): void {
     /* storage unavailable (private mode, native) — the card just comes back
        on reload. */
   }
+}
+
+const COLLAPSED_KEY = 'sammy.resultCardCollapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return storage()?.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Collapsed or open — one choice for every card, kept across reloads, so a
+ *  card folded once stays out of the way for the runs that follow. */
+function useCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = useCallback(() => {
+    setCollapsed(prev => {
+      const next = !prev;
+      try {
+        storage()?.setItem(COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        /* storage unavailable — the choice lasts until reload. */
+      }
+      return next;
+    });
+  }, []);
+  return [collapsed, toggle];
 }
 
 /** The latest run of `orchestrationName` as a Result card — the one this tab
@@ -241,6 +292,8 @@ function FinishedCard({
   run,
   result,
   terminal,
+  collapsed,
+  onToggle,
   onDismiss,
   onViewRun,
   onRunAgain,
@@ -248,11 +301,29 @@ function FinishedCard({
   run: Run;
   result: RunResult;
   terminal: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
   onDismiss?: () => void;
   onViewRun?: () => void;
   onRunAgain?: () => void;
 }) {
   const degraded = result.state === 'degraded';
+  const label = degraded ? '⚠ Finished with issues' : '✓ Finished';
+  const color = degraded ? colors.amber : colors.green;
+  const cardStyle = degraded ? styles.cardAmber : styles.cardGreen;
+  if (collapsed) {
+    return (
+      <CollapsedCard
+        label={label}
+        color={color}
+        cardStyle={cardStyle}
+        result={result}
+        neutral={degraded}
+        onToggle={onToggle}
+        onDismiss={onDismiss}
+      />
+    );
+  }
   const steps =
     result.stepsDone > 0
       ? `${result.stepsDone} step${result.stepsDone === 1 ? '' : 's'}${
@@ -262,11 +333,12 @@ function FinishedCard({
         }`
       : null;
   return (
-    <View style={[styles.card, degraded ? styles.cardAmber : styles.cardGreen]}>
+    <View style={[styles.card, cardStyle]}>
       <Header
-        label={degraded ? '⚠ Finished with issues' : '✓ Finished'}
-        color={degraded ? colors.amber : colors.green}
+        label={label}
+        color={color}
         meta={meta(result)}
+        onToggle={onToggle}
         onDismiss={onDismiss}
       />
       {degraded && (
@@ -307,6 +379,8 @@ function FailedCard({
   run,
   result,
   terminal,
+  collapsed,
+  onToggle,
   onDismiss,
   onViewRun,
   onRetryFrom,
@@ -314,6 +388,8 @@ function FailedCard({
   run: Run;
   result: RunResult;
   terminal: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
   onDismiss?: () => void;
   onViewRun?: () => void;
   onRetryFrom?: (phase: string) => void;
@@ -321,11 +397,30 @@ function FailedCard({
   const label = result.interrupted
     ? `⚠ Interrupted${result.failedPhase ? ` at ${result.failedPhase}` : ''}`
     : `✕ Failed${result.failedPhase ? ` at ${result.failedPhase}` : ''}`;
+  if (collapsed) {
+    return (
+      <CollapsedCard
+        label={label}
+        color={colors.red}
+        cardStyle={styles.cardRed}
+        result={result}
+        neutral
+        onToggle={onToggle}
+        onDismiss={onDismiss}
+      />
+    );
+  }
   const retryFrom = result.forkPoints[result.forkPoints.length - 1];
   const partial = result.output && result.output.phaseName === result.failedPhase;
   return (
     <View style={[styles.card, styles.cardRed]}>
-      <Header label={label} color={colors.red} meta={meta(result)} onDismiss={onDismiss} />
+      <Header
+        label={label}
+        color={colors.red}
+        meta={meta(result)}
+        onToggle={onToggle}
+        onDismiss={onDismiss}
+      />
       {result.error ? (
         <View style={[styles.note, styles.noteRed]}>
           <Text style={styles.noteRedText} numberOfLines={4}>
@@ -495,18 +590,28 @@ function Header({
   subtitle,
   color,
   meta: metaText,
+  collapsed = false,
+  onToggle,
   onDismiss,
+  children,
 }: {
   label: string;
   subtitle?: string;
   color: string;
   meta: string;
+  collapsed?: boolean;
+  /** Collapse or expand the card; the whole header row becomes its toggle. */
+  onToggle?: () => void;
   onDismiss?: () => void;
+  /** Shown between the status and the meta — the collapsed card's link. */
+  children?: ReactNode;
 }) {
-  return (
-    <View style={styles.header}>
+  const row = (
+    <>
+      {onToggle ? <Text style={styles.chevron}>{collapsed ? '▸' : '▾'}</Text> : null}
       <Text style={[styles.status, { color }]}>{label}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      {children}
       <View style={styles.spacer} />
       <Text style={styles.meta}>{metaText}</Text>
       {onDismiss && (
@@ -518,6 +623,71 @@ function Header({
           <Text style={styles.dismiss}>×</Text>
         </Pressable>
       )}
+    </>
+  );
+  // The whole row toggles; the buttons in it (Open ↗, ×) keep their own press.
+  return onToggle ? (
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityLabel={collapsed ? 'Expand result' : 'Collapse result'}
+      accessibilityState={{ expanded: !collapsed }}
+      style={state => [
+        styles.header,
+        styles.headerToggle,
+        // `hovered` is react-native-web's addition to the press state.
+        (state as { hovered?: boolean }).hovered && styles.headerHover,
+      ]}>
+      {row}
+    </Pressable>
+  ) : (
+    <View style={styles.header}>{row}</View>
+  );
+}
+
+/** A settled card folded to one line: the status, the run's main link with
+ *  Open ↗, and the time and cost. */
+function CollapsedCard({
+  label,
+  color,
+  cardStyle,
+  result,
+  neutral = false,
+  onToggle,
+  onDismiss,
+}: {
+  label: string;
+  color: string;
+  cardStyle: object;
+  result: RunResult;
+  neutral?: boolean;
+  onToggle: () => void;
+  onDismiss?: () => void;
+}) {
+  const hero = result.hero;
+  return (
+    <View testID="result-collapsed" style={[styles.card, styles.cardCollapsed, cardStyle]}>
+      <Header
+        label={label}
+        color={color}
+        meta={meta(result)}
+        collapsed
+        onToggle={onToggle}
+        onDismiss={onDismiss}>
+        {hero ? (
+          <View style={styles.compactLink}>
+            <Text style={styles.compactRef} numberOfLines={1}>
+              {hero.ref}
+            </Text>
+            <Button
+              label="Open ↗"
+              kind={neutral ? 'plain' : 'green'}
+              small
+              onPress={() => openLink(hero.url)}
+            />
+          </View>
+        ) : null}
+      </Header>
     </View>
   );
 }
@@ -695,8 +865,15 @@ const styles = StyleSheet.create({
   cardRed: { borderLeftColor: '#dc2626' },
   cardBlue: { borderLeftColor: '#2563eb' },
   cardCancelled: { borderLeftColor: '#9ca3af' },
+  cardCollapsed: { paddingVertical: 9 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  // Bleeds into the card's padding so the press area reaches its edges.
+  headerToggle: { marginHorizontal: -10, marginVertical: -6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  headerHover: { backgroundColor: '#f3f4f6' },
+  chevron: { fontSize: 15, color: '#374151', width: 14 },
   status: { fontSize: 15, fontWeight: '700' },
+  compactLink: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },
+  compactRef: { fontSize: 14, fontWeight: '600', color: '#111827', flexShrink: 1 },
   subtitle: { fontSize: 14, fontWeight: '600', color: '#374151' },
   meta: { fontSize: 12, color: '#6b7280' },
   dismiss: { fontSize: 16, color: '#9ca3af', paddingHorizontal: 4 },

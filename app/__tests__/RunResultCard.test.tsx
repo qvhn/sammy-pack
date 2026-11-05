@@ -107,4 +107,31 @@ describe('RunResultCard', () => {
       g.navigator = saved;
     }
   });
+
+  it('collapses to one line from its status, keeping the PR, and stays collapsed for the next card', () => {
+    const store = new Map<string, string>();
+    const g = globalThis as { localStorage?: unknown };
+    const saved = g.localStorage;
+    g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
+    try {
+      const toggle = (tree: ReactTestRenderer.ReactTestRenderer, label: string) =>
+        ReactTestRenderer.act(() => {
+          tree.root.find(n => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function').props.onPress();
+        });
+      const first = render(runWith('done'));
+      expect(first.text()).toContain('Final output');
+      toggle(first.tree, 'Collapse result');
+      expect(first.text()).not.toContain('Final output');
+      expect(first.text()).toContain('acme/web #1');
+      expect(first.text()).toContain('Open ↗');
+
+      const next = render(runWith('error', [ev({ type: 'run-error', error: 'boom' })]));
+      expect(next.text()).not.toContain('boom');
+      toggle(next.tree, 'Expand result');
+      expect(next.text()).toContain('boom');
+      expect(store.get('sammy.resultCardCollapsed')).toBe('0');
+    } finally {
+      g.localStorage = saved;
+    }
+  });
 });
