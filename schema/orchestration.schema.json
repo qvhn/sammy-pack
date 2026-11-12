@@ -75,7 +75,7 @@
                          "description": "Literal user-message override; interpolated against state + scope (${item}, ${stateVar}, ${input}). Replaces upstream lastOutput as the agent's input for this phase." },
 
         "skill":       { "type": "string", "minLength": 1,
-                         "description": "Harness mode: a Claude Code skill (SKILL.md name, or plugin:skill) the harness agent runs to do this step. A pipeline run ignores it. A run whose steps name a skill that isn't installed fails before it starts." },
+                         "description": "A Claude Code skill (SKILL.md name, or plugin:skill) that does this step, alone or with an `agent`, in either mode: a pipeline step's agent runs it (the agent file, if any, as its guidelines; the step's `tools` are what it may use); a harness agent runs it in its session. A run whose steps name a skill that isn't installed fails before it starts." },
 
         "maxTurns":    { "type": "integer", "minimum": 1,
                          "description": "Per-phase SDK turn cap. Defaults to the proxy's 250-turn limit. Bump for agents that drive long iterative flows (UI automation, simulator-driving, multi-file refactors)." },
@@ -195,7 +195,8 @@
         { "required": ["a2a"] },
         { "required": ["code"] },
         { "required": ["wait"] },
-        { "required": ["http"] }
+        { "required": ["http"] },
+        { "required": ["skill"], "not": { "anyOf": [{ "required": ["agent"] }, { "required": ["agents"] }, { "required": ["phases"] }, { "required": ["parallel"] }, { "required": ["converge"] }, { "required": ["subflow"] }, { "required": ["loop"] }, { "required": ["conversation"] }, { "required": ["route"] }, { "required": ["switch"] }, { "required": ["map"] }, { "required": ["a2a"] }, { "required": ["code"] }, { "required": ["wait"] }, { "required": ["http"] }] } }
       ],
       "allOf": [
         {
@@ -204,7 +205,7 @@
         },
         {
           "if":   { "required": ["tools"] },
-          "then": { "required": ["agent"] }
+          "then": { "anyOf": [{ "required": ["agent"] }, { "required": ["skill"] }] }
         }
       ]
     },

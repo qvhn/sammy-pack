@@ -204,3 +204,15 @@ describe('validate: numeric caps enforced (match the schema maximums)', () => {
     expect(capErr(ret(60001), /initialMs/)).toBeTruthy();
   });
 });
+
+describe('validate: a step done by a skill', () => {
+  test('a skill alone is a body, in either mode — no error, no harness-only warning', () => {
+    const issues = validateOrchestration({ name: 'root', phases: [{ name: 'triage', skill: 'triage-ticket' }] });
+    expect(issues.filter(e => e.nodeName === 'triage')).toEqual([]);
+  });
+
+  test('a step with neither a body nor a skill is still an error', () => {
+    const issues = validateOrchestration({ name: 'root', phases: [{ name: 'empty' }] });
+    expect(issues.find(e => e.nodeName === 'empty' && /no body/.test(e.message))?.severity).toBe('error');
+  });
+});

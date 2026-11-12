@@ -63,6 +63,9 @@ import {
   resolveCommand,
   classifyUnresolved,
   selectSwitchCase,
+  isSkillOnlyStep,
+  skillOf,
+  skillStepMessage,
 } from './resolution';
 import { costUsd } from './pricing';
 import { listAgents, listOrchestrations, type AgentFile } from '../api';
@@ -733,6 +736,10 @@ export type StreamFn = (params: {
   /** Working directory for the spawned agent (the run's single worktree).
    *  Only the proxy adapter honors it. */
   cwd?: string;
+  /** The skills this call may run (a pipeline step's `skill`): listed to the
+   *  agent and runnable by its Skill tool. Only the server SDK adapter honors
+   *  it (see `harnessSupported` on runOrchestration). */
+  skills?: string[];
   /** Harness session: in-process step tools, a session to start or resume,
    *  the skills it may run, and a per-call tool gate. Only the server SDK
    *  adapter honors it (see `harnessSupported` on runOrchestration). */
@@ -968,6 +975,10 @@ type ExecutorContext = {
    *  declares exactly one; otherwise undefined (agents inherit the server
    *  cwd, code.run gets a throwaway temp dir). */
   defaultCwd?: string;
+  /** Where a skill step's agent works when the run has no single worktree —
+   *  the workspace root, where its project skills live (the server's
+   *  `harnessCwd`). */
+  skillCwd?: string;
 
   /** Root-level `state` declarations: which keys have reducer
    *  semantics + their seed values. When `as:` writes to a key here,
@@ -1211,6 +1222,11 @@ function serializeConversation(messages: Message[]): string {
  *  lives here, once. Pair with an
  *  `output` contract (e.g. {"type":"string","pattern":"## Converged board"})
  *  to fail fast when a partial slips through anyway. */
+/** A skill step with no agent file: the brief that stands in for one. */
+export const SKILL_STEP_SYSTEM =
+  'You are doing one step of an orchestration. Do the step with the skill it names, ' +
+  'then answer with the step\'s result.';
+
 export const PHASE_TURN_CONTRACT =
   '\n\n---\n' +
   '[sammy-pack phase contract] You are one phase of an orchestrated run. ' +
@@ -1632,8 +1648,13 @@ async function* runAgentPhase(
     return;
   }
 
-  const agent = ctx.agentByPath.get(agentPath);
-  if (!agent) {
+  // A step with `skill` is done by running that skill. With an agent too, the
+  // agent file is its guidelines; without one, a plain step brief stands in.
+  // (A synthetic child — merger, judge, router, turn — never runs its
+  // parent's skill.)
+  const skill = skillOf(node);
+  const agent = agentPath ? ctx.agentByPath.get(agentPath) : undefined;
+  if (agentPath ? !agent : !skill) {
     // Don't emit phase-error here — the enclosing executeNode /
     // phases-composite / continueOnError handler catches the throw
     // and emits one with the correct semantics (and the right
@@ -1642,7 +1663,7 @@ async function* runAgentPhase(
     throw new Error(`Agent file not found: ${agentPath}`);
   }
 
-  const { systemPrompt } = parseAgentBody(agent.raw);
+  const systemPrompt = agent ? parseAgentBody(agent.raw).systemPrompt : SKILL_STEP_SYSTEM;
   // `node.prompt` is a literal user-message override. When set, it
   // replaces ctx.lastOutput as the agent's input — interpolation
   // still happens, so `${item}` (map scope), `${stateVar}` (as),
@@ -1847,7 +1868,12 @@ async function* runAgentPhase(
   // without requiring a long-lived session protocol. Replacing this
   // with `AsyncIterable<SDKUserMessage>` is a future optimization.
   const conversation: Message[] = [
-    { role: 'user', content: interpolatedInput || `Start the "${node.name}" phase.` },
+    {
+      role: 'user',
+      content: skill
+        ? skillStepMessage(skill, interpolatedInput)
+        : interpolatedInput || `Start the "${node.name}" phase.`,
+    },
   ];
   let aggregateOutput = '';
   let totalInputTokens = 0;
@@ -1927,7 +1953,7 @@ async function* runAgentPhase(
   // only) → the run's. See llm/models.ts.
   const { model: effectiveModel } = phaseModel({
     phaseModel: node.model,
-    agentRaw: agent.raw,
+    agentRaw: agent?.raw,
     runModel: ctx.model,
     claude: !node.provider || node.provider === 'anthropic' || node.provider === 'claude-code',
   });
@@ -2115,7 +2141,14 @@ async function* runAgentPhase(
                 ...(phaseEnv ?? {}),
               }
             : phaseEnv,
-        ...(ctx.defaultCwd ? { cwd: ctx.defaultCwd } : {}),
+        ...(skill ? { skills: [skill] } : {}),
+        // A skill step without a worktree works in the workspace root, where
+        // its project skills live (the preflight checked there).
+        ...(ctx.defaultCwd
+          ? { cwd: ctx.defaultCwd }
+          : skill && ctx.skillCwd
+            ? { cwd: ctx.skillCwd }
+            : {}),
       })) {
         if (ctx.cancelled.v) throw new RunCancelled();
         // Mid-stream pause: any user-initiated pause flag flips during
@@ -4538,6 +4571,12 @@ async function* dispatchNode(
     return;
   }
 
+  // Leaf: a step done by a skill alone — an agent with no agent file.
+  if (node.skill && isSkillOnlyStep(node)) {
+    yield* runAgentPhase(node, '', ctx, input);
+    return;
+  }
+
   // Leaf: outbound A2A call to a remote agent.
   if (node.a2a) {
     yield* runA2aPhase(node, ctx, input);
@@ -5582,12 +5621,13 @@ export function orchestrationUsesCodeRun(root: Node): boolean {
   return childNodesOf(root).some(orchestrationUsesCodeRun);
 }
 
-/** Steps whose only body is a `skill` — doable by a harness, not a pipeline. */
-export function skillOnlySteps(root: Node): string[] {
-  const own = root.skill && compositeKey(root) == null && !root.agent && !root.code && !root.http && !root.wait && !root.a2a && !root.subflow
-    ? [root.name]
-    : [];
-  return [...own, ...childNodesOf(root).flatMap(skillOnlySteps)];
+/** Every leaf step that names a skill, with the skill. */
+export function skillSteps(root: Node): Array<{ name: string; skill: string }> {
+  const skill = skillOf(root);
+  return [
+    ...(skill && (root.agent || isSkillOnlyStep(root)) ? [{ name: root.name, skill }] : []),
+    ...childNodesOf(root).flatMap(skillSteps),
+  ];
 }
 
 /** Collect every `as:`-produced binding name in the tree — the run-wide set of
@@ -7275,6 +7315,7 @@ export async function* runOrchestration({
       ]),
     ),
     defaultCwd: worktrees && worktrees.length === 1 ? worktrees[0].path : undefined,
+    ...(harnessCwd ? { skillCwd: harnessCwd } : {}),
     artifactBytes: { v: 0 },
     artifactsByName: new Map(),
     loadArtifact,
@@ -7414,15 +7455,21 @@ export async function* runOrchestration({
   }
 
   if (orchestration.execution !== 'harness') {
-    const skillOnly = skillOnlySteps(orchestration);
-    if (skillOnly.length > 0) {
-      yield {
-        type: 'run-error',
-        error:
-          `Run halted at preflight: ${skillOnly.map(n => `"${n}"`).join(', ')} only name a skill, which ` +
-          'only a harness can run. Run it as a harness, or give those steps an agent.',
-        ts: Date.now(),
-      };
+    // Skill steps run on the server's Claude Code path, and only with the
+    // skill installed where the agent works — refuse now, not deep in the run.
+    const skilled = skillSteps(orchestration);
+    const notInstalled = skillExists ? skilled.filter(s => !skillExists(s.skill)) : [];
+    const error =
+      skilled.length > 0 && harnessSupported !== true
+        ? `Run halted at preflight: ${skilled.map(s => `"${s.name}"`).join(', ')} run a skill, ` +
+          'which needs a server-owned run on the Claude Code (SDK) path — start it from the sammy-pack server.'
+        : notInstalled.length > 0
+          ? 'Run halted at preflight: ' +
+            notInstalled.map(s => `step "${s.name}" names the skill "${s.skill}", which isn't installed`).join('; ') +
+            '. Install it (a SKILL.md under .claude/skills/<name>/ in the run\'s working directory or ~/.claude/skills/), or remove `skill` from the step.'
+          : null;
+    if (error) {
+      yield { type: 'run-error', error, ts: Date.now() };
       return;
     }
   }

@@ -560,16 +560,8 @@ function validateNode(
   }
 
   const presentKinds = COMPOSITE_KEYS.filter(k => node[k] !== undefined);
-  if (presentKinds.length === 0 && typeof node.skill === 'string' && node.skill.trim() !== '') {
-    // A step done by a skill is a body only to a harness; a pipeline run of
-    // this tree refuses at start (orchestrationUsesSkillOnlySteps).
-    errors.push({
-      path: render(pathParts),
-      message: `node has only a skill ("${node.skill}") — it runs in harness mode only; add an agent to also run it as a pipeline`,
-      nodeName: ctxName,
-      severity: 'warning',
-    });
-  } else if (presentKinds.length === 0) {
+  if (presentKinds.length === 0 && !(typeof node.skill === 'string' && node.skill.trim() !== '')) {
+    // (A step whose only body is a `skill` is a step: its agent runs the skill.)
     errors.push({
       path: render(pathParts),
       message:

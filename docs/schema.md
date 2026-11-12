@@ -257,6 +257,20 @@ The deterministic edges of an automation — record a status in the system that 
 - **Bounded.** `timeoutSeconds` (default 30) and `maxResponseBytes` (default 1 MiB).
 - **Never re-sent on resume.** Like every leaf, a completed request is checkpointed; a run resumed past a later gate replays its output instead of posting twice.
 
+### `skill` — a step done by a skill
+
+```jsonc
+{ "name": "triage", "skill": "triage-ticket", "tools": ["Read", "Bash"] }
+{ "name": "plan",   "agent": "agents/dev-lead.md", "skill": "plan-work" }
+```
+
+A leaf may name a Claude Code skill (a `SKILL.md`, by name or `plugin:skill`) that does the step, alone or with an `agent`. It runs the same way in both modes:
+
+- **Pipeline:** the step's agent is told to run the skill with the Skill tool, on the step's input. It may run only that skill. With an `agent`, the agent file is its guidelines; without one, a plain step brief stands in. The step's `tools` are what the skill may use. With no single worktree, the agent works in the workspace root, where project skills live.
+- **Harness:** the harness agent runs the skill in its session (see [harness.md](harness.md)).
+
+Before the run starts, a skill that isn't installed (under `.claude/skills/<name>/` in the run's working directory, or `~/.claude/skills/`) stops it. Skill steps need a server-owned run on the Claude Code (SDK) path; an in-browser run refuses them.
+
 ### `wait` — durable park (leaf)
 
 ```jsonc
