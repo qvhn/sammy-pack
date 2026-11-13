@@ -37,6 +37,9 @@ import {
   resolveTemplate,
   classifyUnresolved,
   selectSwitchCase,
+  isSkillOnlyStep,
+  skillOf,
+  skillStepMessage,
 } from './resolution';
 import type { Node } from '../types';
 import { compositeKey, DEFAULT_NODE_TIMEOUT_SEC } from '../types';
@@ -61,6 +64,7 @@ export type PreviewFinding = {
 /** How a node's primary "action line" resolved. */
 export type PreviewKind =
   | 'agent' // leaf LLM dispatch
+  | 'skill' // leaf LLM dispatch that runs a skill (no agent file)
   | 'agents' // serial agent chain
   | 'a2a' // outbound remote agent
   | 'code' // inline JS transform
@@ -439,6 +443,7 @@ function walkNode(node: Node, ctx: WalkContext): PreviewNode {
 export const PREVIEW_BODY_KINDS = [
   'subflow',
   'agent',
+  'skill',
   'a2a',
   'code',
   'wait',
@@ -473,6 +478,11 @@ function walkBody(node: Node, ctx: WalkContext): PreviewNode {
   // Leaf agent — a side-effecting LLM dispatch. Resolve the prompt; never call.
   if (node.agent) {
     return walkAgentLeaf(node, node.agent, ctx, base('agent'));
+  }
+
+  // Leaf done by a skill alone — the same dispatch, with no agent file.
+  if (isSkillOnlyStep(node)) {
+    return walkAgentLeaf(node, '', ctx, base('skill'));
   }
 
   // Leaf: outbound A2A call to a remote agent.
@@ -673,7 +683,8 @@ function walkAgentLeaf(
   const lookup = buildLookup(ctx.state, ctx.scope, ctx.input);
   // Resolve the agent path (may itself be `${...}`).
   pv.agentPath = resolveAgentPath(agentPath, lookup);
-  pv.kind = 'agent';
+  const skill = skillOf(node);
+  pv.kind = agentPath ? 'agent' : 'skill';
   // Resolve the prompt EXACTLY as runAgentPhase (resolveAgentInput) — the
   // byte-identical surface the parity test diffs.
   const unresolved = new Set<string>();
@@ -681,7 +692,8 @@ function walkAgentLeaf(
   resolveAgentInput(node, ctx.input, lookup, r => unresolved.add(r));
   const symbolizedText = symbolizeRefs(raw, ctx);
   const symbolic = unresolved.size > 0 || pv.agentPath.includes('${');
-  pv.action = { verb: 'would prompt', text: symbolizedText };
+  // A skill step's message leads with the skill to run (skillStepMessage).
+  pv.action = { verb: 'would prompt', text: skill ? skillStepMessage(skill, symbolizedText) : symbolizedText };
   pv.symbolic = symbolic;
   if (node.as) pv.as = node.as;
   return pv;
@@ -1216,6 +1228,7 @@ function collectProducers(
 function bodyKindOf(node: Node): PreviewKind {
   if (node.subflow) return 'subflow';
   if (node.agent) return 'agent';
+  if (isSkillOnlyStep(node)) return 'skill';
   if (node.a2a) return 'a2a';
   if (node.code) return node.code.run ? 'code.run' : 'code';
   if (node.wait) return 'wait';

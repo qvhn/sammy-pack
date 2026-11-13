@@ -30,7 +30,7 @@ Choose it per run (the Run dialog's **How to run**, or `execution` on
 | Step | In a harness run |
 | --- | --- |
 | an agent step | the harness does it, with the agent file as its guidelines and `prompt` as its task |
-| a step with `skill` | the harness runs that skill (a step may name only a skill — it then runs in harness mode only) |
+| a step with `skill` | the harness runs that skill (a pipeline run does too: the step's agent runs it — see [`skill`](schema.md#skill--a-step-done-by-a-skill)) |
 | `code` / `http` / `wait` / `a2a` | the engine runs it exactly as written when the harness asks (`run_step`) |
 | `lock: true` | the run stops for approval before the step, like a pipeline; a locked section, `parallel` or loop guards every step in it |
 | a `when` that is false | the engine skips the step |

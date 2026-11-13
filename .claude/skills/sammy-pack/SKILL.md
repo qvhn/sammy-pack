@@ -99,7 +99,9 @@ finish; `advisory` — you may skip a step, saying why, and the final report
 lists it as skipped. Gates (`lock`), budgets and the sandbox hold in every mode.
 `harness.instructions` is extra guidance for you; `harness.model`,
 `harness.maxTurns` and `harness.lockFollow` only matter to a server run. A
-pipeline run (`execution` absent or `"pipeline"`) ignores `skill`.
+pipeline run (`execution` absent or `"pipeline"`) honors `skill` too: the step's
+agent runs that skill with the Skill tool on the step's input, with the step's
+`agent` file (if any) as its guidelines.
 
 If the root node carries a `concurrency` block (`{ group, policy? }`), it
 declares mutual exclusion for runs that share an external resource: runs whose
@@ -342,6 +344,7 @@ schema. The CLI must handle each:
 | Body | What to do |
 | --- | --- |
 | `agent` | Single agent. Dispatch via **Agent** tool (see §7). Output → next phase's input. |
+| `skill` (no other body) | A step done by a skill. Dispatch an **Agent** whose task is: run the skill `<skill>` with the Skill tool on the step's input. With an `agent` too, that agent does it the same way, its file as guidelines. Output → next phase's input. |
 | `agents` | Serial chain of agents inside one phase. Dispatch each in order; pipe output → input. Final agent's output is this phase's output. |
 | `phases` | Nested serial phases. Recurse — walk each child phase in order. |
 | `parallel` | Independent branches. Dispatch all in a **single message with multiple Agent tool calls** so they run concurrently. Union the outputs (with branch-name headings) as the next input. |

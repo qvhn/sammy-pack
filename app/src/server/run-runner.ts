@@ -444,7 +444,9 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
           : params.harness?.sessionId
             ? { sessionId: params.harness.sessionId }
             : {}),
-        ...(params.harness?.skills ? { skills: params.harness.skills } : {}),
+        ...((params.skills ?? params.harness?.skills)
+          ? { skills: params.skills ?? params.harness?.skills }
+          : {}),
         ...(params.harness ? { reportUsage: true } : {}),
         ...(params.harness?.onSession ? { onSession: params.harness.onSession } : {}),
       });

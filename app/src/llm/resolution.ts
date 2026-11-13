@@ -27,7 +27,7 @@
 
 import { interpolate, whenTruthy, type State } from './interpolate';
 import { decideSwitch } from './control-flow';
-import type { Node, SwitchBody } from '../types';
+import { compositeKey, type Node, type SwitchBody } from '../types';
 
 /**
  * The interpolation lookup map for a node, exactly as the executor builds it:
@@ -189,4 +189,26 @@ export function resolveCommand(
   onUnresolved?: (ref: string) => void,
 ): string {
   return interpolate(run, lookup, onUnresolved);
+}
+
+/** The skill a leaf step names, if any. A composite's `skill` is not a body. */
+export function skillOf(node: Node): string | undefined {
+  return typeof node.skill === 'string' && node.skill.trim() !== '' && compositeKey(node) == null
+    ? node.skill.trim()
+    : undefined;
+}
+
+/** A step whose only body is a `skill`: its agent runs the skill with no
+ *  agent file behind it. */
+export function isSkillOnlyStep(node: Node): boolean {
+  return (
+    !!skillOf(node) &&
+    !node.agent && !node.code && !node.http && !node.wait && !node.a2a && !node.subflow
+  );
+}
+
+/** A skill step's task (pipeline mode): run the skill, on the step's input. */
+export function skillStepMessage(skill: string, input: string): string {
+  const how = `Run the skill "${skill}" with the Skill tool to do this step.`;
+  return input.trim() ? `${how}\n\n${input}` : how;
 }

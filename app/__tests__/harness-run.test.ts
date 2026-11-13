@@ -308,10 +308,52 @@ describe('harness run', () => {
     );
   });
 
-  it('a pipeline run refuses steps that only name a skill', async () => {
-    const skillOnly: Node = { name: 'o', phases: [{ name: 'triage', skill: 'triage-ticket' }] };
-    const { events } = await run(skillOnly, scriptedAgent([]).streamFn);
-    expect(of(events, 'run-error')[0].error).toMatch(/"triage" only name a skill, which only a harness can run/);
+  it('a pipeline run does a skill step with that skill, in the workspace root', async () => {
+    const o: Node = {
+      name: 'o',
+      phases: [
+        { name: 'triage', skill: 'triage-ticket', tools: ['Read'] },
+        { name: 'plan', agent: 'agents/planner.md', skill: 'plan-work' },
+      ],
+    };
+    const { streamFn, calls } = scriptedAgent([
+      async function* () { yield { type: 'text-delta', text: 'P2' }; },
+      async function* () { yield { type: 'text-delta', text: 'the plan' }; },
+    ]);
+    const { events, thrown } = await run(o, streamFn, { skillExists: () => true, harnessCwd: '/ws' });
+    expect(thrown).toBeNull();
+    expect(of(events, 'run-error')).toHaveLength(0);
+    expect(of(events, 'run-end')).toHaveLength(1);
+    // A skill alone: a plain step brief, the skill as the task, only that skill.
+    expect(calls[0].skills).toEqual(['triage-ticket']);
+    expect(calls[0].messages[0].content).toMatch(/^Run the skill "triage-ticket" with the Skill tool to do this step\.\n\nTICKET-1/);
+    expect(calls[0].system).toMatch(/one step of an orchestration/);
+    expect(calls[0].tools).toEqual(['Read']);
+    expect(calls[0].cwd).toBe('/ws');
+    // With an agent: the agent file is the guidelines, the skill still the how.
+    expect(calls[1].skills).toEqual(['plan-work']);
+    expect(calls[1].system).toMatch(/You plan the work/);
+    expect(calls[1].messages[0].content).toMatch(/^Run the skill "plan-work" with the Skill tool/);
+    expect(of(events, 'phase-end').map(e => e.output)).toEqual(['P2', 'the plan']);
+  });
+
+  it('a plain agent step is unchanged: no skills, no skill brief', async () => {
+    const o: Node = { name: 'o', phases: [{ name: 'plan', agent: 'agents/planner.md' }] };
+    const { streamFn, calls } = scriptedAgent([async function* () { yield { type: 'text-delta', text: 'ok' }; }]);
+    await run(o, streamFn, { harnessCwd: '/ws' });
+    expect(calls[0].skills).toBeUndefined();
+    expect(calls[0].cwd).toBeUndefined();
+    expect(calls[0].messages[0].content).not.toMatch(/Skill tool/);
+  });
+
+  it('a pipeline run refuses skill steps it cannot run: not installed, or no Claude Code path', async () => {
+    const o: Node = { name: 'o', phases: [{ name: 'triage', skill: 'triage-ticket' }] };
+    const missing = await run(o, scriptedAgent([]).streamFn, { skillExists: () => false });
+    expect(of(missing.events, 'run-error')[0].error).toMatch(
+      /step "triage" names the skill "triage-ticket", which isn't installed/,
+    );
+    const browser = await run(o, scriptedAgent([]).streamFn, { harnessSupported: false });
+    expect(of(browser.events, 'run-error')[0].error).toMatch(/"triage" run a skill, which needs a server-owned run/);
   });
 
   it('a skill step tells the agent which skill to run, and the session may run only those skills', async () => {

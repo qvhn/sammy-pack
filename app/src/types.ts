@@ -969,10 +969,12 @@ export type Node = {
   /** Top-level only: harness-mode settings (see {@link HarnessConfig}). */
   harness?: HarnessConfig;
 
-  /** A skill (Claude Code `SKILL.md`, by name or `plugin:skill`) the harness
-   *  agent runs to do this step. Harness mode only — a pipeline run ignores it
-   *  and runs the step's `agent` as usual. A step that names a skill nobody
-   *  installed fails the run before it starts. */
+  /** A skill (Claude Code `SKILL.md`, by name or `plugin:skill`) that does
+   *  this step, in either mode: a harness agent runs it in its session; a
+   *  pipeline step's agent is told to run it, with the step's `agent` file (if
+   *  any) as its guidelines. The step's `tools` are what the skill may use in
+   *  a pipeline. A step that names a skill nobody installed fails the run
+   *  before it starts. */
   skill?: string;
 
   /** Top-level only: mutual exclusion for runs that share an external
