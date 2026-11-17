@@ -550,11 +550,13 @@ export function RunsProvider({ children }: { children: ReactNode }) {
 
   // Mirror history into a ref so hydrateRun (which doesn't depend on
   // history in its deps) can read current state without re-creating
-  // on every event.
+  // on every event. Set during render, not in an effect: children's effects
+  // run before ours, so a child calling hydrateRun from its own effect (the
+  // Result card, the moment a finished run turns into an event-less summary)
+  // would read the previous copy — still holding the live events — mark the
+  // run hydrated without fetching, and leave the card on the empty summary.
   const historyRef = useRef<Run[]>([]);
-  useEffect(() => {
-    historyRef.current = history;
-  }, [history]);
+  historyRef.current = history;
 
   // Mirror active into a ref so resumeServerRun (which is created
   // before the run exists) can read the current Run without forcing
@@ -621,10 +623,27 @@ export function RunsProvider({ children }: { children: ReactNode }) {
           }
           const old = historyRef.current.find(r => r.id === fresh.id);
           const freshVersion = fresh.eventVersion ?? fresh.events?.length ?? 0;
-          if (old && (old.status !== fresh.status || old.eventVersion < freshVersion)) {
+          // Also refetch a run marked hydrated whose copy holds no events
+          // (an event-less summary took its place): the merge never keeps an
+          // empty copy, so nothing else would ever load it again.
+          if (
+            old &&
+            (old.status !== fresh.status ||
+              old.eventVersion < freshVersion ||
+              (old.events.length === 0 && freshVersion > 0))
+          ) {
             hydratedIds.current.delete(fresh.id);
             fetchFullRun(fresh.id);
           }
+        }
+        // A run this tab holds events for — it finished here, its stream
+        // merging text deltas — but fewer than the server counts: load the
+        // full run, keeping the copy we have on screen until it lands (below).
+        for (const fresh of list) {
+          if (fresh.id === activeId || liveIds.has(fresh.id) || hydratedIds.current.has(fresh.id)) continue;
+          const old = historyRef.current.find(r => r.id === fresh.id);
+          const freshVersion = fresh.eventVersion ?? fresh.events?.length ?? 0;
+          if (old && old.events.length > 0 && old.events.length < freshVersion) fetchFullRun(fresh.id);
         }
         setHistory(prev => {
           // First copy wins (see `history`): it is the newest, full one.
@@ -680,6 +699,12 @@ export function RunsProvider({ children }: { children: ReactNode }) {
                 old.events.length > 0
               ) {
                 return { ...base, events: old.events, eventVersion: old.events.length };
+              }
+              // A settled run whose full copy is on its way (fetched above):
+              // keep showing the events we have — its Result card's branch,
+              // steps, output and end cost — rather than blank it for a beat.
+              if (old && old.events.length > 0 && old.status === fresh.status) {
+                return { ...base, events: old.events, eventVersion: old.eventVersion };
               }
               return base;
             });

@@ -92,6 +92,11 @@ const STRUCTURAL_BY_VARIANT: Record<string, string[]> = {
   // phase-session: the SDK's session UUID and the agent's working directory —
   // what `claude --resume` needs verbatim (a pattern pass could mangle the id).
   'phase-session': ['sessionId', 'cwd'],
+  // question / question-closed: the SDK's tool-use id for the question (the
+  // answer route's key). The free text — `questions`, `answers` — is
+  // object-typed, so this scan cannot see it; the test below covers it.
+  question: ['questionId'],
+  'question-closed': ['questionId'],
 };
 
 /** Field names that are free text by their nature and must be scrubbed even
@@ -325,5 +330,28 @@ describe('server env secrets by NAME shape (operator-supplied credentials)', () 
     withEnv('DB_PASSWORD', 'short', () => {
       expect(serverSecretValues()).not.toContain('short');
     });
+  });
+});
+
+describe('a question and its answers are scrubbed in the log', () => {
+  it('question text, options and typed answers lose a pasted secret', () => {
+    const asked = scrubEvent({
+      type: 'question',
+      phaseName: 'p',
+      questionId: 'q1',
+      questions: [{ question: `Use ${SECRET}?`, header: 'Key', options: [{ label: 'Yes', description: SECRET }], multiSelect: false }],
+      ts: 1,
+    }) as unknown as { questions: Array<{ question: string; options: Array<{ description: string }> }> };
+    expect(JSON.stringify(asked.questions)).not.toContain(SECRET);
+    expect(asked.questions[0].options[0].description).not.toBe(SECRET);
+    const closed = scrubEvent({
+      type: 'question-closed',
+      phaseName: 'p',
+      questionId: 'q1',
+      outcome: 'answered',
+      answers: { 'Which key?': `this one: ${SECRET}` },
+      ts: 1,
+    }) as unknown as { answers: Record<string, string> };
+    expect(JSON.stringify(closed.answers)).not.toContain(SECRET);
   });
 });

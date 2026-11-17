@@ -22,6 +22,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { forgetProcess, registerRunProcess } from './run-process-registry';
 import { classifySdkResult, TerminalPhaseError } from '../llm/terminal-failure';
+import type { QuestionItem, QuestionOutcome } from '../llm/anthropic';
 import {
   CACHE_READ_WEIGHT,
   ceilingVerdict,
@@ -201,6 +202,20 @@ export type SdkStreamChunk =
       };
     }
   | {
+      /** The agent asked a question (AskUserQuestion) and waits on
+       *  `onQuestion` for the answer. */
+      type: 'question';
+      id: string;
+      questions: QuestionItem[];
+    }
+  | {
+      /** That wait ended. */
+      type: 'question-closed';
+      id: string;
+      outcome: QuestionOutcome;
+      answers?: Record<string, string>;
+    }
+  | {
       type: 'done';
       usage: {
         inputTokens: number;
@@ -280,6 +295,14 @@ export type SdkStreamParams = {
    *  loud `awaiting-approval` event + a fast phase failure. Default false keeps
    *  the interactive behavior exactly as before. */
   failOnToolPrompt?: boolean;
+  /** Answer the agent's questions (its AskUserQuestion tool): the agent waits
+   *  for what this resolves to, and only it — a server run asks the person
+   *  running it. Undefined leaves the SDK's own handling, which refuses the
+   *  question when no one is there. */
+  onQuestion?: (
+    q: { id: string; questions: QuestionItem[] },
+    signal: AbortSignal,
+  ) => Promise<{ outcome: QuestionOutcome; answers?: Record<string, string> }>;
   /** Map of subagent name → AgentDefinition. Wired to the SDK's
    *  `agents` option; the orchestrator agent dispatches via
    *  Task("name", "prompt"). */
@@ -371,6 +394,7 @@ export async function* streamSdk(
     permissionMode,
     autoApproveTools = [],
     failOnToolPrompt = false,
+    onQuestion,
     subagents,
     mcpServers,
     effort,
@@ -398,10 +422,26 @@ export async function* streamSdk(
   // deny it and remember it — after the loop we throw
   // ToolPermissionRequiredError so the phase fails fast instead of wedging.
   let blockedTool: string | null = null;
-  const canUseTool = failOnToolPrompt
-    ? async (toolName: string): Promise<PermissionResult> => {
+  // Chunks raised outside the message loop (a question opening or closing
+  // while the SDK waits on the hook below), merged into it by `withSide`.
+  const side = sideQueue<SdkStreamChunk>();
+  const canUseTool = failOnToolPrompt || onQuestion
+    ? async (
+        toolName: string,
+        input: Record<string, unknown>,
+        options?: { signal?: AbortSignal; toolUseID?: string },
+      ): Promise<PermissionResult> => {
+        if (toolName === 'AskUserQuestion' && onQuestion) {
+          return askPerson(input, options?.toolUseID ?? globalThis.crypto.randomUUID(), options?.signal);
+        }
         if (isToolPreApproved(toolName, allowlist)) {
-          return { behavior: 'allow', updatedInput: {} };
+          // Pass the call through as asked: `updatedInput` replaces the
+          // tool's input, so an empty object would run it with no arguments.
+          return { behavior: 'allow', updatedInput: input };
+        }
+        if (!failOnToolPrompt) {
+          // What the SDK does with no hook and no one to ask.
+          return { behavior: 'deny', message: `No one is present to approve ${toolName}.` };
         }
         blockedTool = toolName;
         return {
@@ -414,6 +454,39 @@ export async function* streamSdk(
         };
       }
     : undefined;
+  /** Hand the agent's questions to `onQuestion` and wait — this call is what
+   *  the agent's tool call is blocked on, so only this agent waits. */
+  async function askPerson(
+    input: Record<string, unknown>,
+    id: string,
+    toolSignal: AbortSignal | undefined,
+  ): Promise<PermissionResult> {
+    const questions = Array.isArray(input.questions) ? (input.questions as QuestionItem[]) : [];
+    if (questions.length === 0) {
+      return { behavior: 'deny', message: 'AskUserQuestion needs at least one question.' };
+    }
+    side.push({ type: 'question', id, questions });
+    const signal = toolSignal
+      ? AbortSignal.any([toolSignal, abortController.signal])
+      : abortController.signal;
+    const r = await onQuestion!({ id, questions }, signal);
+    side.push({
+      type: 'question-closed',
+      id,
+      outcome: r.outcome,
+      ...(r.answers ? { answers: r.answers } : {}),
+    });
+    if (r.outcome === 'answered' && r.answers) {
+      return { behavior: 'allow', updatedInput: { ...input, answers: r.answers } };
+    }
+    return {
+      behavior: 'deny',
+      message:
+        r.outcome === 'timed-out'
+          ? 'No answer came in time. Carry on with your best judgment and say what you assumed.'
+          : 'The question was withdrawn: the step is stopping.',
+    };
+  }
 
   // Merge injected vars OVER the inherited process.env. The SDK's `env`
   // option defaults to process.env, so a partial map passed alone would
@@ -570,7 +643,13 @@ export async function* streamSdk(
   });
   onSession?.({ setModel: model => session.setModel(model) });
 
-  for await (const msg of session) {
+  for await (const item of withSide(session, side)) {
+    if ('side' in item) {
+      lastYieldAt = Date.now();
+      yield item.side;
+      continue;
+    }
+    const msg = item.msg;
     // Heartbeat accounting: every SDK message counts as activity; label the
     // newest one so a silent tail's beats say what the turn was doing
     // (thinking_delta, input_json_delta, assistant-message, tool-result, …).
@@ -832,4 +911,59 @@ export function decorateAuthError(message: string): string {
     );
   }
   return message;
+}
+
+
+/** A queue a callback can push to while a generator is awaiting something
+ *  else; `wait()` resolves once it holds something. */
+function sideQueue<T>(): { items: T[]; push: (t: T) => void; wait: () => Promise<void> } {
+  let wake: (() => void) | null = null;
+  const q = {
+    items: [] as T[],
+    push(t: T) {
+      q.items.push(t);
+      wake?.();
+      wake = null;
+    },
+    // Already holding something (pushed while the caller was busy starting
+    // the next read): no need to wait at all.
+    wait: () => (q.items.length > 0 ? Promise.resolve() : new Promise<void>(r => (wake = r))),
+  };
+  return q;
+}
+
+/** Yield `src`'s messages, and the side queue's chunks as soon as they are
+ *  pushed — even while `src` is blocked (the SDK waits on the permission hook
+ *  while a question is open, so its next message is not coming yet). */
+async function* withSide<T, S>(
+  src: AsyncIterable<T>,
+  side: ReturnType<typeof sideQueue<S>>,
+): AsyncIterable<{ msg: T } | { side: S }> {
+  const it = src[Symbol.asyncIterator]();
+  let next: Promise<IteratorResult<T>> | null = null;
+  // One wait at a time, kept across messages: a fresh promise per SDK message
+  // (thousands of stream deltas a turn) would be allocated only to be dropped.
+  let pushed: Promise<null> | null = null;
+  let finished = false;
+  try {
+    while (true) {
+      while (side.items.length > 0) yield { side: side.items.shift()! };
+      next ??= it.next();
+      pushed ??= side.wait().then(() => null);
+      const r = await Promise.race([next, pushed]);
+      if (r === null) {
+        pushed = null;
+        continue;
+      }
+      next = null;
+      if (r.done) {
+        finished = true;
+        while (side.items.length > 0) yield { side: side.items.shift()! };
+        return;
+      }
+      yield { msg: r.value };
+    }
+  } finally {
+    if (!finished) await it.return?.(undefined);
+  }
 }

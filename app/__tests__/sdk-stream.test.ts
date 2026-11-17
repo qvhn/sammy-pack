@@ -254,3 +254,107 @@ describe('agent process ownership', () => {
     expect(calls[0].options?.spawnClaudeCodeProcess).toBeUndefined();
   });
 });
+
+describe('an agent asking the person running it a question', () => {
+  const asked = {
+    questions: [
+      {
+        question: 'Which color?',
+        header: 'Color',
+        options: [
+          { label: 'Red', description: 'warm' },
+          { label: 'Blue', description: 'cool' },
+        ],
+        multiSelect: false,
+      },
+    ],
+  };
+
+  test('the question streams out while the agent waits; the answer goes back as the tool input', async () => {
+    // The fake SDK blocks on canUseTool exactly as the real one does: no
+    // message comes until the hook returns. The question chunk must still
+    // reach the caller — or nothing could ever answer it.
+    let decision: PermissionResult | null = null;
+    const { queryFn } = fakeQuery(async p => {
+      decision = await p.options!.canUseTool!('AskUserQuestion', asked, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-q',
+      });
+      return [turn(10, 5), result()];
+    });
+    let answer!: (a: { outcome: 'answered'; answers: Record<string, string> }) => void;
+    const chunks: SdkStreamChunk[] = [];
+    for await (const c of streamSdk({
+      userMessage: 'hi',
+      model: 'claude-sonnet-4-6',
+      abortController: new AbortController(),
+      queryFn,
+      onQuestion: q => {
+        expect(q).toEqual({ id: 'tu-q', questions: asked.questions });
+        return new Promise(r => (answer = r));
+      },
+    })) {
+      chunks.push(c);
+      if (c.type === 'question') answer({ outcome: 'answered', answers: { 'Which color?': 'Blue' } });
+    }
+    expect(chunks.map(c => c.type)).toEqual(['question', 'question-closed', 'done']);
+    expect(chunks[1]).toEqual({
+      type: 'question-closed',
+      id: 'tu-q',
+      outcome: 'answered',
+      answers: { 'Which color?': 'Blue' },
+    });
+    expect(decision).toEqual({
+      behavior: 'allow',
+      updatedInput: { ...asked, answers: { 'Which color?': 'Blue' } },
+    });
+  });
+
+  test('no answer in time: the agent is told to carry on with its best judgment', async () => {
+    let decision: PermissionResult | null = null;
+    const { queryFn } = fakeQuery(async p => {
+      decision = await p.options!.canUseTool!('AskUserQuestion', asked, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-q',
+      });
+      return [result()];
+    });
+    const chunks = await drain({ queryFn, onQuestion: async () => ({ outcome: 'timed-out' }) });
+    expect(chunks.find(c => c.type === 'question-closed')).toMatchObject({ outcome: 'timed-out' });
+    expect(decision).toMatchObject({ behavior: 'deny', message: expect.stringMatching(/best judgment/) });
+  });
+
+  test('other tools keep the old answer: denied, without failing the step', async () => {
+    let decision: PermissionResult | null = null;
+    const { queryFn } = fakeQuery(async p => {
+      decision = await p.options!.canUseTool!('Write', {}, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-w',
+      });
+      return [result()];
+    });
+    await drain({ queryFn, onQuestion: async () => ({ outcome: 'cancelled' }) });
+    expect(decision).toMatchObject({ behavior: 'deny' });
+    expect(decision).not.toHaveProperty('interrupt');
+  });
+
+  test('a pre-approved tool runs with the arguments it was called with', async () => {
+    let decision: PermissionResult | null = null;
+    const input = { command: 'ls' };
+    const { queryFn } = fakeQuery(async p => {
+      decision = await p.options!.canUseTool!('Bash', input, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-b',
+      });
+      return [result()];
+    });
+    await drain({ queryFn, tools: ['Bash'], onQuestion: async () => ({ outcome: 'cancelled' }) });
+    expect(decision).toEqual({ behavior: 'allow', updatedInput: input });
+  });
+
+  test('without a question handler there is no hook — the SDK handles it as before', async () => {
+    const { calls, queryFn } = fakeQuery([result()]);
+    await drain({ queryFn });
+    expect(calls[0].options?.canUseTool).toBeUndefined();
+  });
+});

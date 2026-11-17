@@ -10,7 +10,8 @@
  *    decisions (approve, request changes, reject) with an optional note;
  *  - failed: the step and the error, what finished, and a retry from the last
  *    finished step;
- *  - running: a thin strip with the step running now;
+ *  - running: a thin strip with the step running now, and an Answer chip
+ *    when a step's agent is waiting on you (the question dock opens);
  *  - cancelled: a grey line.
  *
  *  A settled card (finished, failed, cancelled) collapses to one line — the
@@ -21,11 +22,13 @@
  *  so the card works for runs recorded before it existed. The page decides
  *  which actions exist by passing their handlers. */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRuns, type Run } from '../store/runs';
 import { requestRun } from '../store/runSelection';
 import { decideGate } from '../api';
+import { openQuestions } from '../lib/run-questions';
+import { openQuestionDock } from '../QuestionDock';
 import {
   deriveRunResult,
   formatCost,
@@ -66,18 +69,39 @@ export function RunResultCard({
   onGate?: (decision: GateDecision, message?: string) => void | Promise<void>;
 }) {
   const now = useTicker(run.status === 'running' || run.status === 'paused');
-  const result = useMemo(
+  const derived = useMemo(
     () => deriveRunResult(run, now),
     // `run.events` is mutated in place; eventVersion says when it grew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [run, run.eventVersion, run.events, run.status, now],
   );
+  // The end cost stays up until the card is dismissed. A copy of the run
+  // without its events (a list summary carries no cost) would read $0.00;
+  // keep the last cost this run showed instead.
+  const lastCost = useRef<{ id: string; usd: number } | null>(null);
+  if (derived.costUsd > 0 || run.events.length > 0) lastCost.current = { id: run.id, usd: derived.costUsd };
+  const result =
+    run.events.length === 0 && derived.costUsd === 0 && lastCost.current?.id === run.id
+      ? { ...derived, costUsd: lastCost.current.usd }
+      : derived;
 
   const [collapsed, toggle] = useCollapsed();
+  const asked = useMemo(
+    () => openQuestions(run.events, run.status),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run.eventVersion, run.events, run.status],
+  );
 
   switch (result.state) {
     case 'running':
-      return <RunningStrip result={result} onViewRun={onViewRun} />;
+      return (
+        <RunningStrip
+          result={result}
+          onViewRun={onViewRun}
+          questions={asked.reduce((n, q) => n + q.questions.length, 0)}
+          onAnswer={() => openQuestionDock(run.id)}
+        />
+      );
     case 'waiting':
       return <WaitingCard run={run} result={result} onViewRun={onViewRun} onGate={onGate} />;
     case 'cancelled':
@@ -557,7 +581,18 @@ function WaitingCard({
   );
 }
 
-function RunningStrip({ result, onViewRun }: { result: RunResult; onViewRun?: () => void }) {
+function RunningStrip({
+  result,
+  onViewRun,
+  questions = 0,
+  onAnswer,
+}: {
+  result: RunResult;
+  onViewRun?: () => void;
+  /** Questions this run's agents are waiting on you to answer. */
+  questions?: number;
+  onAnswer?: () => void;
+}) {
   const total = result.stepsTotal;
   const n = Math.min(result.stepsDone + 1, total ?? Infinity);
   const where = [
@@ -578,6 +613,17 @@ function RunningStrip({ result, onViewRun }: { result: RunResult; onViewRun?: ()
       ) : null}
       <Text style={styles.stripMeta}>{meta(result)}</Text>
       <View style={styles.spacer} />
+      {questions > 0 && onAnswer ? (
+        <Pressable
+          onPress={onAnswer}
+          accessibilityRole="button"
+          accessibilityLabel="Answer questions"
+          style={styles.askChip}>
+          <Text style={styles.askChipText}>
+            {questions === 1 ? '? 1 question for you · Answer' : `? ${questions} questions for you · Answer`}
+          </Text>
+        </Pressable>
+      ) : null}
       {onViewRun && <Button label="View live" onPress={onViewRun} small />}
     </View>
   );
@@ -976,6 +1022,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     flexWrap: 'wrap',
   },
+  askChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#7c3aed',
+  },
+  askChipText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb' },
   stripStrong: { fontSize: 13, fontWeight: '700', color: '#1e3a8a' },
   stripText: { fontSize: 13, color: '#1e3a8a' },

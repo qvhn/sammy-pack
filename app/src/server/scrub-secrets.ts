@@ -413,6 +413,13 @@ export function scrubEvent<T>(ev: T, secrets?: Iterable<string>): T {
       };
     case 'harness-notice':
       return { ...ev, message: scrubSecrets(String(e.message ?? ''), secrets) };
+    // An agent's question (its text and options are model output) and the
+    // answers a person typed back. Only the logged copy is scrubbed; the
+    // agent gets the answers as given.
+    case 'question':
+      return { ...ev, questions: scrubDeep(e.questions, secrets) };
+    case 'question-closed':
+      return e.answers != null ? { ...ev, answers: scrubDeep(e.answers, secrets) } : ev;
     default:
       return ev;
   }

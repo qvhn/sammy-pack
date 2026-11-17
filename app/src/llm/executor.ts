@@ -27,7 +27,13 @@
  *   7. `as`       — store output in state under this name (post-success)
  */
 
-import { streamAnthropic, type Message, type StreamEvent } from './anthropic';
+import {
+  streamAnthropic,
+  type Message,
+  type QuestionItem,
+  type QuestionOutcome,
+  type StreamEvent,
+} from './anthropic';
 import {
   detectTerminalMarker,
   isTerminalFailure,
@@ -521,6 +527,29 @@ export type RunEvent =
       ts: number;
     }
   | {
+      /** A step's agent asked the person running it something and waits
+       *  for the answer — only that step (and what needs its output) waits;
+       *  the rest of the run goes on. Answered through
+       *  POST /api/runs/:id/questions/:questionId. Timers around the step
+       *  stop counting while it is open. */
+      type: 'question';
+      phaseName: string;
+      questionId: string;
+      questions: QuestionItem[];
+      ts: number;
+    }
+  | {
+      /** The wait for `questionId` ended: `answered` (with the answers, by
+       *  question text), `timed-out` (the step's `questionTimeout`; the agent
+       *  carries on without one) or `cancelled` (the step stopped). */
+      type: 'question-closed';
+      phaseName: string;
+      questionId: string;
+      outcome: QuestionOutcome;
+      answers?: Record<string, string>;
+      ts: number;
+    }
+  | {
       type: 'state-set';
       key: string;
       ts: number;
@@ -744,6 +773,12 @@ export type StreamFn = (params: {
    *  the skills it may run, and a per-call tool gate. Only the server SDK
    *  adapter honors it (see `harnessSupported` on runOrchestration). */
   harness?: HarnessStreamOptions;
+  /** Seconds the agent's question may wait for an answer before it carries
+   *  on without one (the step's `questionTimeout`). Unset waits as long as
+   *  it takes. Only the server SDK adapter asks anyone. A function is read
+   *  when the question is asked: one harness session spans many steps, each
+   *  with its own setting. */
+  questionTimeout?: number | (() => number | undefined);
 }) => AsyncIterable<StreamEvent>;
 
 type ExecutorContext = {
@@ -1413,16 +1448,19 @@ async function* drainWithDeadline<T>(
   }
   const it = source[Symbol.asyncIterator]();
   let timedOut = false;
+  // Time spent waiting on a person's answer doesn't count.
+  const watch = questionWatch();
   try {
     while (true) {
-      const remaining = deadlineMs - Date.now();
-      if (remaining <= 0) {
+      const remaining = deadlineMs + watch.pausedMs() - Date.now();
+      if (remaining <= 0 && !watch.open()) {
         timedOut = true;
         return;
       }
       const next = it.next();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<{ __deadline: true }>(resolve => {
+        if (watch.open()) return;
         timer = setTimeout(() => resolve({ __deadline: true }), remaining);
         (timer as unknown as { unref?: () => void }).unref?.();
       });
@@ -1437,6 +1475,7 @@ async function* drainWithDeadline<T>(
         return;
       }
       if (result.done) return;
+      watch.see(result.value);
       yield result.value;
     }
   } finally {
@@ -2081,11 +2120,12 @@ async function* runAgentPhase(
     }
     // Carry run/phase identity onto the queued waiter so the Queue view can
     // attribute this blocked dispatch + the reorder API can target it.
-    const releaseSlot = await agentSlots.acquire({
+    const slotMeta = {
       runId: ctx.runId,
       orchestrationName: ctx.orchestrationName,
       phaseName: node.name,
-    });
+    };
+    let releaseSlot = await agentSlots.acquire(slotMeta);
     // A run cancelled while queued grabs its slot then bails immediately.
     if (ctx.cancelled.v) {
       releaseSlot();
@@ -2101,6 +2141,11 @@ async function* runAgentPhase(
       node,
       ctx.orchestrationDefaults,
     );
+    // Questions this exchange's agent asked that are still open: a stream that
+    // dies while one waits never sends its `question-closed`, so the catch
+    // below closes them — or the timers around the step, and the run's
+    // "question for you" chip, would treat it as waiting forever.
+    const asked = new Set<string>();
     try {
       for await (const ev of streamFn({
         apiKey: ctx.apiKey,
@@ -2124,6 +2169,9 @@ async function* runAgentPhase(
         maxThinkingTokens: node.maxThinkingTokens,
         maxTurns: node.maxTurns,
         maxAgentTokens: resolvedMaxAgentTokens,
+        ...(typeof node.questionTimeout === 'number' && node.questionTimeout > 0
+          ? { questionTimeout: node.questionTimeout }
+          : {}),
         hooks: Array.isArray(node.hooks) && node.hooks.length > 0 ? node.hooks : undefined,
         deniedCommands:
           sandbox?.deniedCommands && sandbox.deniedCommands.length > 0
@@ -2242,6 +2290,18 @@ async function* runAgentPhase(
             textBytes: ev.textBytes,
             ts: Date.now(),
           };
+        } else if (ev.type === 'question') {
+          asked.add(ev.id);
+          // Waiting on a person can take hours: hand the slot to someone
+          // else's agent meanwhile, or a few unanswered questions would hold
+          // every slot and stall every run (the agent's process stays open,
+          // idle). Taken back, in queue order, once the answer is in.
+          if (asked.size === 1) releaseSlot();
+          yield questionEvent(node.name, ev);
+        } else if (ev.type === 'question-closed') {
+          const wasOpen = asked.delete(ev.id);
+          yield questionClosedEvent(node.name, ev);
+          if (wasOpen && asked.size === 0) releaseSlot = await agentSlots.acquire(slotMeta);
         } else if (ev.type === 'done') {
           exchangeInputTokens = ev.usage.inputTokens;
           exchangeOutputTokens = ev.usage.outputTokens;
@@ -2250,6 +2310,8 @@ async function* runAgentPhase(
         }
       }
     } catch (err) {
+      for (const id of asked) yield questionClosedEvent(node.name, { id, outcome: 'cancelled' });
+      asked.clear();
       if (err instanceof RunCancelled) {
         const spent = spendOnAbort();
         if (spent) yield abortSpendEvent(spent);
@@ -3873,13 +3935,16 @@ async function* withTimeout<T>(
   const deadline = Date.now() + seconds * 1000;
   const inner = iter[Symbol.asyncIterator]();
   let endedNormally = false;
+  // Time spent waiting on a person's answer doesn't count.
+  const watch = questionWatch();
   try {
     while (true) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new TimeoutError(seconds, errOpts);
+      const remaining = deadline + watch.pausedMs() - Date.now();
+      if (remaining <= 0 && !watch.open()) throw new TimeoutError(seconds, errOpts);
       const next = inner.next();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<{ timeout: true }>(resolve => {
+        if (watch.open()) return;
         timer = setTimeout(() => resolve({ timeout: true }), remaining);
         (timer as unknown as { unref?: () => void }).unref?.();
       });
@@ -3891,6 +3956,7 @@ async function* withTimeout<T>(
       }
       if ('timeout' in result) throw new TimeoutError(seconds, errOpts);
       if (result.done) { endedNormally = true; return; }
+      watch.see(result.value);
       yield result.value;
     }
   } finally {
@@ -3898,6 +3964,63 @@ async function* withTimeout<T>(
       try { await inner.return?.(undefined); } catch { /* ignore */ }
     }
   }
+}
+
+/** The run event for a step's agent asking a question. */
+function questionEvent(
+  phaseName: string,
+  ev: { id: string; questions: QuestionItem[] },
+): RunEvent {
+  return { type: 'question', phaseName, questionId: ev.id, questions: ev.questions, ts: Date.now() };
+}
+
+/** The run event for that question's wait ending. */
+function questionClosedEvent(
+  phaseName: string,
+  ev: { id: string; outcome: QuestionOutcome; answers?: Record<string, string> },
+): RunEvent {
+  return {
+    type: 'question-closed',
+    phaseName,
+    questionId: ev.id,
+    outcome: ev.outcome,
+    ...(ev.answers ? { answers: ev.answers } : {}),
+    ts: Date.now(),
+  };
+}
+
+/** Questions open inside a stream, seen from a timer wrapped around it. The
+ *  question events of the steps under the wrapper pass through it — a
+ *  parallel sibling's do not — so each timer pauses exactly while something
+ *  it encloses waits on a person. `pausedMs()` is the waiting time so far. */
+export function questionWatch(): {
+  see: (ev: unknown) => void;
+  open: () => boolean;
+  pausedMs: () => number;
+} {
+  const ids = new Set<string>();
+  let since = 0;
+  let total = 0;
+  return {
+    see(ev) {
+      // The fan-out groups drain their children's events wrapped by
+      // `protect` ({ ok: event } / { err }), so look inside the wrapper.
+      const raw = ev as { ok?: unknown } | null;
+      const e = (raw && typeof raw === 'object' && 'ok' in raw ? raw.ok : raw) as {
+        type?: unknown;
+        questionId?: unknown;
+      };
+      if (typeof e?.questionId !== 'string') return;
+      if (e.type === 'question') {
+        if (ids.size === 0) since = Date.now();
+        ids.add(e.questionId);
+      } else if (e.type === 'question-closed' && ids.delete(e.questionId) && ids.size === 0) {
+        total += Date.now() - since;
+      }
+    },
+    open: () => ids.size > 0,
+    pausedMs: () => total + (ids.size > 0 ? Date.now() - since : 0),
+  };
 }
 
 /** Stall watchdog. Wraps a RunEvent stream and aborts it after `stallSeconds`
@@ -3925,6 +4048,8 @@ async function* withStallGuard(
 ): AsyncIterable<RunEvent> {
   const inner = iter[Symbol.asyncIterator]();
   const stallMs = stallSeconds * 1000;
+  // A step waiting on a person's answer is quiet, not stalled.
+  const watch = questionWatch();
   // Tracks whether `inner` still needs tearing down in the `finally`. Cleared
   // once we've already driven it to completion (stall return, or its own done)
   // so we never double-return; left true if we exit abnormally (a throw, or a
@@ -3936,6 +4061,7 @@ async function* withStallGuard(
       const next = inner.next();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stall = new Promise<{ stalled: true }>((resolve) => {
+        if (watch.open()) return;
         timer = setTimeout(() => resolve({ stalled: true }), stallMs);
         (timer as unknown as { unref?: () => void }).unref?.();
       });
@@ -3954,6 +4080,7 @@ async function* withStallGuard(
       if (result.done) { needsReturn = false; return; }
       // A real event — progress. The next loop iteration creates a fresh timer,
       // so the stall window restarts from now.
+      watch.see(result.value);
       yield result.value;
     }
   } finally {
@@ -6758,6 +6885,9 @@ async function* runHarness(
       // A takeover asked for between legs: hand over at the first event.
       if (control.wantTerminal) requestInterrupt();
     }
+    // Questions the leg's agent asked that are still open (id → the step that
+    // asked), closed below if the leg dies before its `question-closed`.
+    const asked = new Map<string, string>();
     const legEvents = async function* (): AsyncIterable<RunEvent> {
       const chunks = (async function* () {
         try {
@@ -6784,6 +6914,11 @@ async function* runHarness(
             },
             ...(cwd ? { cwd } : {}),
             harness: harnessOpts,
+            // The step in progress when the agent asks decides how long it waits.
+            questionTimeout: () => {
+              const t = progress.active?.node.questionTimeout;
+              return typeof t === 'number' && t > 0 ? t : undefined;
+            },
           })) {
             yield { from: 'agent' as const, ev };
           }
@@ -6830,6 +6965,12 @@ async function* runHarness(
             textBytes: ev.textBytes,
             ts: Date.now(),
           };
+        } else if (ev.type === 'question') {
+          asked.set(ev.id, phaseName);
+          yield questionEvent(phaseName, ev);
+        } else if (ev.type === 'question-closed') {
+          yield questionClosedEvent(asked.get(ev.id) ?? phaseName, ev);
+          asked.delete(ev.id);
         } else if (ev.type === 'usage' || ev.type === 'done') {
           const breach = chargeUsage(ev.usage);
           if (breach) {
@@ -6845,6 +6986,8 @@ async function* runHarness(
     try {
       for await (const ev of withStallGuard(legEvents(), HARNESS_PHASE, stallSeconds)) yield ev;
     } catch (e) {
+      for (const [id, step] of asked) yield questionClosedEvent(step, { id, outcome: 'cancelled' });
+      asked.clear();
       // A session that died mid-turn still spent what it reports.
       const dead = usageOf(e);
       if (dead) chargeUsage(dead);

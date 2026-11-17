@@ -102,6 +102,11 @@ import {
   feedbackTargetKey,
   terminalFailureForGate,
 } from './src/server/gate-invalidation';
+import {
+  answerQuestion,
+  openQuestionIds,
+  runsWithOpenQuestions,
+} from './src/server/run-questions';
 import { artifactLoaderFor, createRunRunner } from './src/server/run-runner';
 import {
   pendingWaitOf,
@@ -2827,6 +2832,7 @@ export async function mountSammyApi(
                segs[1] === 'terminal' || segs[1] === 'handback')) {
             return next();
           }
+          if (segs.length === 3 && segs[1] === 'questions') return next();
 
           if (!id) {
             if (method === 'GET') {
@@ -7640,6 +7646,57 @@ export async function mountSammyApi(
         return sendError(res, 405, 'Method not allowed');
       });
 
+      // GET /api/questions → { questions: [...] } — every question a step's
+      //   agent is waiting on right now, across the caller's runs, oldest
+      //   first: { runId, orchestrationName, phaseName, questionId,
+      //   questions, ts }. The page's question dock polls it so a question
+      //   finds you wherever you are; answer through
+      //   POST /api/runs/:id/questions/:questionId.
+      /** `runId/questionId` → the dock's row for a waiting question, taken
+       *  from the run's log once rather than on every poll. */
+      const waitingQuestionRows = new Map<string, Record<string, unknown>>();
+      server.middlewares.use('/api/questions', answered(async (req, res) => {
+        if ((req.method ?? 'GET').toUpperCase() !== 'GET') {
+          return sendError(res, 405, 'Method not allowed');
+        }
+        const callerId = extractOwnerId(req);
+        const out: Array<Record<string, unknown>> = [];
+        for (const runId of runsWithOpenQuestions()) {
+          // Owner check on the summary row: every open tab polls this every
+          // few seconds, and the run's full event log is only needed once
+          // per question, to find its (scrubbed) logged copy.
+          if (!(await store.getRunSummary(runId, callerId))) continue;
+          const open = openQuestionIds(runId);
+          if (open.some(id => !waitingQuestionRows.has(`${runId}/${id}`))) {
+            const run = await store.getRun(runId, callerId);
+            if (!run) continue;
+            for (const e of run.events as RunEvent[]) {
+              if (e.type !== 'question' || !open.includes(e.questionId)) continue;
+              waitingQuestionRows.set(`${runId}/${e.questionId}`, {
+                runId,
+                orchestrationName: run.orchestrationName,
+                phaseName: e.phaseName,
+                questionId: e.questionId,
+                questions: e.questions,
+                ts: e.ts,
+              });
+            }
+          }
+          for (const id of open) {
+            const row = waitingQuestionRows.get(`${runId}/${id}`);
+            if (row) out.push(row);
+          }
+        }
+        // Forget questions no longer waiting. Any caller's poll prunes; a row
+        // is only ever served after that caller's own owner check above.
+        for (const key of [...waitingQuestionRows.keys()]) {
+          const [runId, id] = key.split('/');
+          if (!openQuestionIds(runId).includes(id)) waitingQuestionRows.delete(key);
+        }
+        out.sort((a, b) => Number(a.ts) - Number(b.ts));
+        return sendJson(res, 200, { questions: out });
+      }));
+
       // ─── Agent execution queue (the concurrency-cap waitlist) ────────
       // GET  /api/agent-queue           → { limit, inUse, waiting, queued[] }
       //   The cross-run waitlist: leaf agent dispatches blocked because the
@@ -8390,7 +8447,8 @@ export async function mountSammyApi(
         const url = new URL(req.url ?? '/', 'http://localhost');
         const segs = url.pathname.replace(/^\//, '').split('/').filter(Boolean);
         // /api/runs/:id/events or /api/runs/:id/cancel
-        if (segs.length !== 2) return next();
+        // (and /api/runs/:id/questions/:questionId)
+        if (segs.length !== 2 && !(segs.length === 3 && segs[1] === 'questions')) return next();
         const [id, action] = segs;
         if (!isSafeName(id)) return next();
 
@@ -8724,6 +8782,26 @@ export async function mountSammyApi(
         // leaf crosses — or matched by the sweeper if the run parks first.
         // Non-string payloads are JSON-stringified; the payload string
         // becomes the wait phase's output.
+        // POST /api/runs/:id/questions/:questionId { answers } → answer a
+        //      question a step's agent is waiting on. `answers` maps each
+        //      question's text to the answer (a chosen option's label, labels
+        //      joined with ", " for a multi-select, or the person's own words).
+        //      Only that agent was waiting; it carries on with the answers.
+        if (action === 'questions') {
+          if ((req.method ?? 'POST') !== 'POST')
+            return sendError(res, 405, 'Method not allowed');
+          const questionId = segs[2] ?? '';
+          let body: { answers?: unknown };
+          try {
+            body = JSON.parse(await readBody(req));
+          } catch {
+            return sendError(res, 400, 'Invalid JSON');
+          }
+          const r = answerQuestion(id, questionId, body.answers);
+          if (!r.ok) return sendError(res, r.status, r.reason);
+          return sendJson(res, 200, { ok: true });
+        }
+
         if (action === 'signal') {
           if ((req.method ?? 'POST') !== 'POST')
             return sendError(res, 405, 'Method not allowed');

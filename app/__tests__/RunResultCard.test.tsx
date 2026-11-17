@@ -51,6 +51,18 @@ function render(run: Run) {
 const GREEN = '#f0fdf4';
 
 describe('RunResultCard', () => {
+  it('keeps the end cost when the run comes back without its events', () => {
+    const full = runWith('done');
+    const c = render(full);
+    expect(c.text()).toContain('$0.10');
+    // A list summary of the same run: no events, no cost.
+    ReactTestRenderer.act(() => {
+      c.tree.update(<RunResultCard run={{ ...full, events: [], eventVersion: 2 }} terminal={false} />);
+    });
+    expect(c.text()).toContain('$0.10');
+    expect(c.text()).not.toContain('$0.00');
+  });
+
   it('a finished run shows its PR in green', () => {
     const { hero, heroBackground } = render(runWith('done'));
     expect(hero()).toBeDefined();

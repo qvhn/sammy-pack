@@ -803,6 +803,11 @@ export type Node = {
    *  DEFAULT_STALL_TIMEOUT_SEC (overridable via SAMMY_DEFAULT_STALL_TIMEOUT_SEC).
    *  Raise it for a node that legitimately runs long without emitting output. */
   stallTimeout?: number;
+  /** Seconds this step's agent waits for an answer when it asks the person
+   *  running it a question (server runs). When it passes, the agent carries
+   *  on with its best judgment. Unset waits as long as it takes. Time spent
+   *  waiting never counts toward `timeout` or `stallTimeout`. */
+  questionTimeout?: number;
   /** Stall → recovery hook. When the stall watchdog aborts this node, run a
    *  recovery phase and re-run the node (up to `maxRetries`) instead of letting
    *  the stall abort the run. Distinct from `retry` (re-attempt with no fix-up)

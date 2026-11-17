@@ -7,6 +7,7 @@ import {
 import { getConnectionToken } from './store/connections';
 import { getActiveWorkspace } from './store/workspace';
 import type { PreviewFinding, PreviewNode } from './llm/preview';
+import type { QuestionItem } from './llm/anthropic';
 import type { Node, Workspace } from './types';
 
 /**
@@ -204,6 +205,51 @@ export async function decideGate(
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`${res.status} ${body}`.trim());
+  }
+}
+
+/** A question a step's agent is waiting on (GET /api/questions). */
+export type WaitingQuestion = {
+  runId: string;
+  orchestrationName: string;
+  phaseName: string;
+  questionId: string;
+  questions: QuestionItem[];
+  ts: number;
+};
+
+/** Every question a run's agent is waiting on right now, oldest first. */
+export async function listWaitingQuestions(): Promise<WaitingQuestion[]> {
+  const res = await fetch('/api/questions');
+  if (!res.ok) throw new Error(`${res.status}`);
+  const body = (await res.json()) as { questions?: WaitingQuestion[] };
+  return Array.isArray(body.questions) ? body.questions : [];
+}
+
+/** Answer a question a run's agent is waiting on. `answers` maps each
+ *  question's text to the answer. */
+export async function answerRunQuestion(
+  runId: string,
+  questionId: string,
+  answers: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(
+    `/api/runs/${encodeURIComponent(runId)}/questions/${encodeURIComponent(questionId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    let reason = body;
+    try {
+      reason = (JSON.parse(body) as { error?: string }).error ?? body;
+    } catch {
+      /* not JSON — show it as it came */
+    }
+    throw new Error(reason || `${res.status}`);
   }
 }
 

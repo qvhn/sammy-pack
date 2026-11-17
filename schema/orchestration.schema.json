@@ -47,6 +47,8 @@
                          "description": "Per-attempt wallclock timeout in seconds. When unset, the node still gets a generous default hard cap (DEFAULT_NODE_TIMEOUT_SEC, ~1800s, overridable via SAMMY_DEFAULT_NODE_TIMEOUT_SEC) so nothing runs unbounded." },
         "stallTimeout": { "type": "number", "exclusiveMinimum": 0,
                          "description": "Stall watchdog in seconds: abort if this node yields no progress event for this long, even while under its `timeout`. The timer resets on every emitted run event — and since agent phases emit a throttled phase-heartbeat (≤ ~1/30s) whenever the SDK turn is working without producing text or completed tool calls (thinking, streamed tool arguments), event silence and watchdog silence are the SAME clock: a running phase whose event stream has been quiet for minutes is genuinely wedged, not quietly working. Fires -> StallError -> retry / onError. Defaults to DEFAULT_STALL_TIMEOUT_SEC (~420s, overridable via SAMMY_DEFAULT_STALL_TIMEOUT_SEC). Raise it for a node that legitimately runs long without emitting output." },
+        "questionTimeout": { "type": "number", "exclusiveMinimum": 0,
+                         "description": "Seconds this step's agent waits for an answer when it asks the person running it a question (server runs). When it passes, the agent carries on with its best judgment. Unset waits as long as it takes. Waiting never counts toward `timeout` or `stallTimeout`." },
         "retry":       { "$ref": "#/$defs/retryPolicy" },
         "onStall":     { "$ref": "#/$defs/onStallPolicy" },
         "budget":      { "$ref": "#/$defs/budget" },
