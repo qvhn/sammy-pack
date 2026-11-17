@@ -162,3 +162,28 @@ test('a stall window alone is held open by a question too', async () => {
   );
   expect(events[events.length - 1].type).toBe('run-end');
 });
+
+test.each(['parallel', 'map'])('a %s group’s own deadline waits for a question inside it too', async kind => {
+  // The fan-out groups enforce their deadline on wrapped child events — the
+  // first version of the question pause only looked at bare ones, so a
+  // 30-minute default cut a waiting step off and ran on without its output.
+  const { streamFn, release } = setup();
+  const group: Node =
+    kind === 'parallel'
+      ? {
+          name: 'both',
+          timeout: 0.4,
+          parallel: [
+            { name: 'ask', agent: 'agents/asker.md' },
+            { name: 'work', agent: 'agents/worker.md' },
+          ],
+        }
+      : { name: 'both', timeout: 0.4, map: { over: '["one"]', body: { name: 'ask', agent: 'agents/asker.md' } } };
+  const events = await run({ name: 'flow', phases: [group] }, streamFn, e => {
+    if (e.type === 'question') setTimeout(release, 900);
+  });
+  const types = events.map(e => e.type);
+  expect(types).not.toContain('composite-partial');
+  expect(events.find(e => e.type === 'phase-end' && e.phaseName === 'ask')).toMatchObject({ output: 'picked Blue' });
+  expect(types[types.length - 1]).toBe('run-end');
+});

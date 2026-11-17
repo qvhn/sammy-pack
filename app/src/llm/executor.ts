@@ -3985,7 +3985,13 @@ export function questionWatch(): {
   let total = 0;
   return {
     see(ev) {
-      const e = ev as { type?: unknown; questionId?: unknown };
+      // The fan-out groups drain their children's events wrapped by
+      // `protect` ({ ok: event } / { err }), so look inside the wrapper.
+      const raw = ev as { ok?: unknown } | null;
+      const e = (raw && typeof raw === 'object' && 'ok' in raw ? raw.ok : raw) as {
+        type?: unknown;
+        questionId?: unknown;
+      };
       if (typeof e?.questionId !== 'string') return;
       if (e.type === 'question') {
         if (ids.size === 0) since = Date.now();
