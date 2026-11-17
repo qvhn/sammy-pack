@@ -10,7 +10,9 @@
  *    decisions (approve, request changes, reject) with an optional note;
  *  - failed: the step and the error, what finished, and a retry from the last
  *    finished step;
- *  - running: a thin strip with the step running now;
+ *  - running: a thin strip with the step running now, under a card for each
+ *    question a step's agent is waiting on you to answer — one question at a
+ *    time ("1 of 3"), options to pick, your own words if none fits;
  *  - cancelled: a grey line.
  *
  *  A settled card (finished, failed, cancelled) collapses to one line — the
@@ -25,7 +27,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRuns, type Run } from '../store/runs';
 import { requestRun } from '../store/runSelection';
-import { decideGate } from '../api';
+import { answerRunQuestion, decideGate } from '../api';
+import { answerText, openQuestions, type OpenQuestion } from '../lib/run-questions';
 import {
   deriveRunResult,
   formatCost,
@@ -74,10 +77,23 @@ export function RunResultCard({
   );
 
   const [collapsed, toggle] = useCollapsed();
+  const asked = useMemo(
+    () => openQuestions(run.events, run.status),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run.eventVersion, run.events, run.status],
+  );
 
   switch (result.state) {
     case 'running':
-      return <RunningStrip result={result} onViewRun={onViewRun} />;
+      if (asked.length === 0) return <RunningStrip result={result} onViewRun={onViewRun} />;
+      return (
+        <View style={styles.stack}>
+          {asked.map(q => (
+            <QuestionCard key={q.questionId} runId={run.id} open={q} now={now} />
+          ))}
+          <RunningStrip result={result} onViewRun={onViewRun} />
+        </View>
+      );
     case 'waiting':
       return <WaitingCard run={run} result={result} onViewRun={onViewRun} onGate={onGate} />;
     case 'cancelled':
@@ -557,6 +573,155 @@ function WaitingCard({
   );
 }
 
+/** A step's agent is waiting on you: its questions one at a time, each with
+ *  its options (one, or several when it asks for that) and a box for your own
+ *  answer. Only that step waits — the run's other steps carry on. */
+function QuestionCard({ runId, open, now }: { runId: string; open: OpenQuestion; now: number }) {
+  const qs = open.questions;
+  const [index, setIndex] = useState(0);
+  const [picked, setPicked] = useState<string[][]>(() => qs.map(() => []));
+  const [own, setOwn] = useState<string[]>(() => qs.map(() => ''));
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const q = qs[index];
+  const answers = qs.map((item, i) => answerText(item, picked[i] ?? [], own[i] ?? ''));
+  const last = index === qs.length - 1;
+  const ready = answers[index] !== '';
+
+  const pick = (label: string) => {
+    setPicked(prev =>
+      prev.map((p, i) => {
+        if (i !== index) return p;
+        if (!q.multiSelect) return [label];
+        return p.includes(label) ? p.filter(l => l !== label) : [...p, label];
+      }),
+    );
+    // One choice: picking an option replaces words typed in its place.
+    if (!q.multiSelect) setOwn(prev => prev.map((o, i) => (i === index ? '' : o)));
+  };
+  const type = (text: string) => {
+    setOwn(prev => prev.map((o, i) => (i === index ? text : o)));
+    if (!q.multiSelect && text.trim()) setPicked(prev => prev.map((p, i) => (i === index ? [] : p)));
+  };
+  const send = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await answerRunQuestion(
+        runId,
+        open.questionId,
+        Object.fromEntries(qs.map((item, i) => [item.question, answers[i]])),
+      );
+      setSent(true);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const waited = open.ts ? ` · waiting ${formatDuration(Math.max(0, now - open.ts))}` : '';
+  if (sent) {
+    return (
+      <View testID="question-card" style={[styles.card, styles.cardViolet, styles.cardCollapsed]}>
+        <Header label="✓ Answer sent" color={colors.violet} subtitle={`${open.phaseName} is carrying on`} meta="" />
+      </View>
+    );
+  }
+  const chosen = picked[index] ?? [];
+  const preview = q.options.find(o => chosen.includes(o.label) && o.preview)?.preview;
+  return (
+    <View testID="question-card" style={[styles.card, styles.cardViolet]}>
+      <Header
+        label="? Question for you"
+        subtitle={`${open.phaseName} asks`}
+        color={colors.violet}
+        meta={`the rest of the run carries on${waited}`}
+      />
+      <View style={styles.qTop}>
+        {qs.length > 1 ? (
+          <Text style={styles.qCount}>{`${index + 1} of ${qs.length}`}</Text>
+        ) : null}
+        {q.header ? (
+          <View style={styles.qTag}>
+            <Text style={styles.qTagText}>{q.header}</Text>
+          </View>
+        ) : null}
+        {q.multiSelect ? <Text style={styles.qHint}>Pick any that apply</Text> : null}
+        <View style={styles.spacer} />
+        {qs.length > 1 ? (
+          <View style={styles.qDots}>
+            {qs.map((_, i) => (
+              <View
+                key={i}
+                style={[styles.qDot, answers[i] !== '' && styles.qDotDone, i === index && styles.qDotHere]}
+              />
+            ))}
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.qText}>{q.question}</Text>
+      <View style={styles.qOptions}>
+        {q.options.map(o => {
+          const on = chosen.includes(o.label);
+          return (
+            <Pressable
+              key={o.label}
+              onPress={() => pick(o.label)}
+              accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
+              accessibilityState={{ checked: on }}
+              accessibilityLabel={o.label}
+              style={state => [
+                styles.qOption,
+                (state as { hovered?: boolean }).hovered && styles.qOptionHover,
+                on && styles.qOptionOn,
+              ]}>
+              <View style={[q.multiSelect ? styles.qBox : styles.qRadio, on && styles.qMarkOn]}>
+                {on ? <Text style={styles.qMarkText}>{q.multiSelect ? '✓' : '●'}</Text> : null}
+              </View>
+              <View style={styles.qOptionBody}>
+                <Text style={styles.qLabel}>{o.label}</Text>
+                {o.description ? <Text style={styles.qDesc}>{o.description}</Text> : null}
+              </View>
+            </Pressable>
+          );
+        })}
+        <TextInput
+          value={own[index] ?? ''}
+          onChangeText={type}
+          placeholder={q.multiSelect ? 'Add your own (optional)' : 'Or answer in your own words'}
+          placeholderTextColor="#9ca3af"
+          accessibilityLabel="Your own answer"
+          style={styles.noteInput}
+          multiline
+        />
+      </View>
+      {preview ? (
+        <View style={styles.outputBody}>
+          <Text style={styles.qPreview}>{preview}</Text>
+        </View>
+      ) : null}
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <Actions>
+        {qs.length > 1 && (
+          <Button label="← Back" disabled={index === 0 || busy} onPress={() => setIndex(i => Math.max(0, i - 1))} />
+        )}
+        {last ? (
+          <Button
+            label={busy ? 'Sending…' : qs.length > 1 ? 'Send answers' : 'Send answer'}
+            kind="primary"
+            disabled={busy || answers.some(a => a === '')}
+            onPress={() => { send().catch(() => undefined); }}
+          />
+        ) : (
+          <Button label="Next →" kind="primary" disabled={!ready} onPress={() => setIndex(i => i + 1)} />
+        )}
+      </Actions>
+    </View>
+  );
+}
+
 function RunningStrip({ result, onViewRun }: { result: RunResult; onViewRun?: () => void }) {
   const total = result.stepsTotal;
   const n = Math.min(result.stepsDone + 1, total ?? Infinity);
@@ -847,6 +1012,7 @@ const colors = {
   red: '#b91c1c',
   blue: '#1d4ed8',
   grey: '#4b5563',
+  violet: '#6d28d9',
 };
 
 const styles = StyleSheet.create({
@@ -864,6 +1030,58 @@ const styles = StyleSheet.create({
   cardAmber: { borderLeftColor: '#d97706' },
   cardRed: { borderLeftColor: '#dc2626' },
   cardBlue: { borderLeftColor: '#2563eb' },
+  cardViolet: { borderLeftColor: '#7c3aed' },
+  stack: { gap: 10 },
+  qTop: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  qCount: { fontSize: 12, fontWeight: '700', color: '#6d28d9' },
+  qTag: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: '#f5f3ff' },
+  qTagText: { fontSize: 11, fontWeight: '700', color: '#6d28d9', letterSpacing: 0.3 },
+  qHint: { fontSize: 12, color: '#6b7280' },
+  qDots: { flexDirection: 'row', gap: 5 },
+  qDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#e5e7eb' },
+  qDotDone: { backgroundColor: '#c4b5fd' },
+  qDotHere: { backgroundColor: '#7c3aed' },
+  qText: { fontSize: 15, fontWeight: '600', color: '#111827', lineHeight: 22 },
+  qOptions: { gap: 8 },
+  qOption: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: '#ffffff',
+  },
+  qOptionHover: { backgroundColor: '#f9fafb' },
+  qOptionOn: { borderColor: '#7c3aed', backgroundColor: '#f5f3ff' },
+  qRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#9ca3af',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  qBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#9ca3af',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  qMarkOn: { borderColor: '#7c3aed', backgroundColor: '#7c3aed' },
+  qMarkText: { color: '#ffffff', fontSize: 10, fontWeight: '700', lineHeight: 12 },
+  qOptionBody: { flex: 1, gap: 2 },
+  qLabel: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  qDesc: { fontSize: 13, color: '#4b5563', lineHeight: 18 },
+  qPreview: { fontFamily: 'Menlo', fontSize: 12, lineHeight: 18, color: '#1f2937' },
   cardCancelled: { borderLeftColor: '#9ca3af' },
   cardCollapsed: { paddingVertical: 9 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },

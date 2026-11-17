@@ -53,7 +53,33 @@ export type StreamEvent =
       type: 'usage';
       usage: Usage;
     }
+  | {
+      /** The agent asked the person running it something (its
+       *  AskUserQuestion tool) and is waiting for the answer. The executor
+       *  forwards it as `question`. */
+      type: 'question';
+      id: string;
+      questions: QuestionItem[];
+    }
+  | {
+      /** The wait for `question` ended: answered, or no answer came. */
+      type: 'question-closed';
+      id: string;
+      outcome: QuestionOutcome;
+      answers?: Record<string, string>;
+    }
   | { type: 'done'; usage: Usage };
+
+/** One question an agent asks (the SDK's AskUserQuestion input shape). */
+export type QuestionItem = {
+  question: string;
+  header: string;
+  options: Array<{ label: string; description: string; preview?: string }>;
+  multiSelect: boolean;
+};
+
+/** How the wait for an answer ended. */
+export type QuestionOutcome = 'answered' | 'timed-out' | 'cancelled';
 
 type CallParams = {
   apiKey: string;

@@ -451,6 +451,36 @@ export function buildOpenApiDoc(): object {
           },
         },
       },
+      '/api/runs/{id}/questions/{questionId}': {
+        post: {
+          tags: ['runs'],
+          summary: 'Answer a question a step’s agent is waiting on',
+          description:
+            'A step’s agent asked the person running it something (a ' +
+            '`question` run event, keyed by `questionId`) and waits for the ' +
+            'answer. Only that step waits; the rest of the run carries on. ' +
+            '`answers` maps each question’s text to the answer: a chosen ' +
+            'option’s label, labels joined with ", " for a multi-select, or ' +
+            'the person’s own words. A `question-closed` event follows.',
+          security: mutatingSecurity,
+          parameters: [
+            runIdParam,
+            {
+              name: 'questionId',
+              in: 'path',
+              required: true,
+              description: 'The `questionId` of the run’s `question` event.',
+              schema: { type: 'string' },
+            },
+          ],
+          requestBody: jsonBody(ref('QuestionAnswerRequest')),
+          responses: {
+            '200': jsonResponse('The agent has the answers.', { type: 'object', properties: { ok: { type: 'boolean' } } }),
+            '400': errorResponse('Invalid JSON, or a question left unanswered.'),
+            '404': errorResponse('Run not found, or no agent is waiting on that question.'),
+          },
+        },
+      },
       '/api/runs/{id}/signal': {
         post: {
           tags: ['runs'],
@@ -2036,6 +2066,17 @@ export function buildOpenApiDoc(): object {
             messageDelivered: { type: 'boolean' },
           },
           required: ['ok'],
+        },
+        QuestionAnswerRequest: {
+          type: 'object',
+          properties: {
+            answers: {
+              type: 'object',
+              additionalProperties: { type: 'string', minLength: 1 },
+              description: 'Question text → answer, one entry per question asked.',
+            },
+          },
+          required: ['answers'],
         },
         SignalRequest: {
           type: 'object',

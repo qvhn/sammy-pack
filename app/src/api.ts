@@ -207,6 +207,33 @@ export async function decideGate(
   }
 }
 
+/** Answer a question a run's agent is waiting on. `answers` maps each
+ *  question's text to the answer. */
+export async function answerRunQuestion(
+  runId: string,
+  questionId: string,
+  answers: Record<string, string>,
+): Promise<void> {
+  const res = await fetch(
+    `/api/runs/${encodeURIComponent(runId)}/questions/${encodeURIComponent(questionId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    let reason = body;
+    try {
+      reason = (JSON.parse(body) as { error?: string }).error ?? body;
+    } catch {
+      /* not JSON — show it as it came */
+    }
+    throw new Error(reason || `${res.status}`);
+  }
+}
+
 export async function locateRepo(url: string): Promise<RepoLocation> {
   const res = await fetch(`/api/repos/locate?url=${encodeURIComponent(url)}`);
   return json<RepoLocation>(res);

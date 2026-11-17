@@ -102,6 +102,7 @@ import {
   feedbackTargetKey,
   terminalFailureForGate,
 } from './src/server/gate-invalidation';
+import { answerQuestion } from './src/server/run-questions';
 import { artifactLoaderFor, createRunRunner } from './src/server/run-runner';
 import {
   pendingWaitOf,
@@ -2827,6 +2828,7 @@ export async function mountSammyApi(
                segs[1] === 'terminal' || segs[1] === 'handback')) {
             return next();
           }
+          if (segs.length === 3 && segs[1] === 'questions') return next();
 
           if (!id) {
             if (method === 'GET') {
@@ -8390,7 +8392,8 @@ export async function mountSammyApi(
         const url = new URL(req.url ?? '/', 'http://localhost');
         const segs = url.pathname.replace(/^\//, '').split('/').filter(Boolean);
         // /api/runs/:id/events or /api/runs/:id/cancel
-        if (segs.length !== 2) return next();
+        // (and /api/runs/:id/questions/:questionId)
+        if (segs.length !== 2 && !(segs.length === 3 && segs[1] === 'questions')) return next();
         const [id, action] = segs;
         if (!isSafeName(id)) return next();
 
@@ -8724,6 +8727,26 @@ export async function mountSammyApi(
         // leaf crosses — or matched by the sweeper if the run parks first.
         // Non-string payloads are JSON-stringified; the payload string
         // becomes the wait phase's output.
+        // POST /api/runs/:id/questions/:questionId { answers } → answer a
+        //      question a step's agent is waiting on. `answers` maps each
+        //      question's text to the answer (a chosen option's label, labels
+        //      joined with ", " for a multi-select, or the person's own words).
+        //      Only that agent was waiting; it carries on with the answers.
+        if (action === 'questions') {
+          if ((req.method ?? 'POST') !== 'POST')
+            return sendError(res, 405, 'Method not allowed');
+          const questionId = segs[2] ?? '';
+          let body: { answers?: unknown };
+          try {
+            body = JSON.parse(await readBody(req));
+          } catch {
+            return sendError(res, 400, 'Invalid JSON');
+          }
+          const r = answerQuestion(id, questionId, body.answers);
+          if (!r.ok) return sendError(res, r.status, r.reason);
+          return sendJson(res, 200, { ok: true });
+        }
+
         if (action === 'signal') {
           if ((req.method ?? 'POST') !== 'POST')
             return sendError(res, 405, 'Method not allowed');

@@ -46,6 +46,8 @@ import { buildHarnessMcpServer, harnessControlFor, harnessToolGateHook, skillIns
 import { HARNESS_TOOL_SERVER, resolveFollow, type ResolvedFollow } from '../llm/harness';
 import { harnessSettingsFile, readHarnessSettingsSync } from './harness-settings';
 import type { RunContext } from './run-context';
+import { waitForAnswer } from './run-questions';
+import type { QuestionItem } from '../llm/anthropic';
 
 /** Wrap a run's event stream in a secret-scrubbing pass. Redacts known
  *  token patterns + the run's active injected-secret literals from the
@@ -291,6 +293,9 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
     /** Owner / orchestration scoping so MCP connection-ref resolution (and
      *  the matching secret collection) honors per-credential allowlists. */
     credScope?: { ownerId?: string; orchestrationName?: string },
+    /** The run's id: an agent's questions wait under it for an answer
+     *  (run-questions.ts). Without one, questions are refused as before. */
+    runId?: string,
   ): StreamFn {
     return async function* serverStream(params) {
       const requestedMcp = Array.isArray(params.mcp) ? params.mcp : [];
@@ -424,6 +429,15 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
         permissionMode: params.permissionMode,
         ...(autoApproveTools.length > 0 ? { autoApproveTools } : {}),
         ...(failOnToolPrompt ? { failOnToolPrompt } : {}),
+        ...(runId
+          ? {
+              onQuestion: (q: { id: string; questions: QuestionItem[] }, signal: AbortSignal) =>
+                waitForAnswer(runId, q.id, q.questions, {
+                  signal,
+                  ...(params.questionTimeout ? { timeoutSeconds: params.questionTimeout } : {}),
+                }),
+            }
+          : {}),
         subagents: params.subagents,
         mcpServers,
         effort: params.effort,
@@ -525,7 +539,7 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
       initialInput: opts.initialInput,
       // Thread the run's secret sink + cred scope so MCP-config secrets get
       // collected for scrubbing (and resolved under the same allowlists).
-      streamFn: buildServerStreamFn(c, injectedSecrets, credScope),
+      streamFn: buildServerStreamFn(c, injectedSecrets, credScope, opts.runId),
       // That stream refuses a sandbox-denied Bash command itself (PreToolUse).
       enforcesDeniedCommands: true,
       // ...and hosts harness sessions (in-process step tools, resume, skills).
