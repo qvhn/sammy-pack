@@ -91,3 +91,8 @@ export function answerQuestion(
 export function openQuestionIds(runId: string): string[] {
   return [...(byRun.get(runId)?.keys() ?? [])];
 }
+
+/** Runs with at least one question waiting. */
+export function runsWithOpenQuestions(): string[] {
+  return [...byRun.keys()];
+}

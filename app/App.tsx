@@ -3,6 +3,7 @@ import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from './src/safe-area';
 import { CommandPalette } from './src/CommandPalette';
 import { PageErrorBoundary } from './src/PageErrorBoundary';
+import { QuestionDock } from './src/QuestionDock';
 import { Sidebar, type PageId } from './src/Sidebar';
 import { AgentsPage } from './src/pages/AgentsPage';
 import { ConnectionsPage } from './src/pages/ConnectionsPage';
@@ -77,6 +78,13 @@ function AppContent() {
         </PageErrorBoundary>
       </View>
       <CommandPalette onNavigate={navigate} />
+      {/* Questions a run's agents are waiting on — on every page. */}
+      <QuestionDock
+        onOpenRun={runId => {
+          requestRun(runId);
+          navigate('runs');
+        }}
+      />
     </View>
   );
 }

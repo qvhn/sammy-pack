@@ -7,6 +7,7 @@ import {
 import { getConnectionToken } from './store/connections';
 import { getActiveWorkspace } from './store/workspace';
 import type { PreviewFinding, PreviewNode } from './llm/preview';
+import type { QuestionItem } from './llm/anthropic';
 import type { Node, Workspace } from './types';
 
 /**
@@ -205,6 +206,24 @@ export async function decideGate(
     const body = await res.text().catch(() => '');
     throw new Error(`${res.status} ${body}`.trim());
   }
+}
+
+/** A question a step's agent is waiting on (GET /api/questions). */
+export type WaitingQuestion = {
+  runId: string;
+  orchestrationName: string;
+  phaseName: string;
+  questionId: string;
+  questions: QuestionItem[];
+  ts: number;
+};
+
+/** Every question a run's agent is waiting on right now, oldest first. */
+export async function listWaitingQuestions(): Promise<WaitingQuestion[]> {
+  const res = await fetch('/api/questions');
+  if (!res.ok) throw new Error(`${res.status}`);
+  const body = (await res.json()) as { questions?: WaitingQuestion[] };
+  return Array.isArray(body.questions) ? body.questions : [];
 }
 
 /** Answer a question a run's agent is waiting on. `answers` maps each

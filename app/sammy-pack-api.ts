@@ -102,7 +102,11 @@ import {
   feedbackTargetKey,
   terminalFailureForGate,
 } from './src/server/gate-invalidation';
-import { answerQuestion } from './src/server/run-questions';
+import {
+  answerQuestion,
+  openQuestionIds,
+  runsWithOpenQuestions,
+} from './src/server/run-questions';
 import { artifactLoaderFor, createRunRunner } from './src/server/run-runner';
 import {
   pendingWaitOf,
@@ -7641,6 +7645,37 @@ export async function mountSammyApi(
         }
         return sendError(res, 405, 'Method not allowed');
       });
+
+      // GET /api/questions → { questions: [...] } — every question a step's
+      //   agent is waiting on right now, across the caller's runs, oldest
+      //   first: { runId, orchestrationName, phaseName, questionId,
+      //   questions, ts }. The page's question dock polls it so a question
+      //   finds you wherever you are; answer through
+      //   POST /api/runs/:id/questions/:questionId.
+      server.middlewares.use('/api/questions', answered(async (req, res) => {
+        if ((req.method ?? 'GET').toUpperCase() !== 'GET') {
+          return sendError(res, 405, 'Method not allowed');
+        }
+        const out: Array<Record<string, unknown>> = [];
+        for (const runId of runsWithOpenQuestions()) {
+          const run = await store.getRun(runId, extractOwnerId(req));
+          if (!run) continue;
+          const open = new Set(openQuestionIds(runId));
+          for (const e of run.events as RunEvent[]) {
+            if (e.type !== 'question' || !open.has(e.questionId)) continue;
+            out.push({
+              runId,
+              orchestrationName: run.orchestrationName,
+              phaseName: e.phaseName,
+              questionId: e.questionId,
+              questions: e.questions,
+              ts: e.ts,
+            });
+          }
+        }
+        out.sort((a, b) => Number(a.ts) - Number(b.ts));
+        return sendJson(res, 200, { questions: out });
+      }));
 
       // ─── Agent execution queue (the concurrency-cap waitlist) ────────
       // GET  /api/agent-queue           → { limit, inUse, waiting, queued[] }
