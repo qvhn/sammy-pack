@@ -3,8 +3,10 @@
  *
  *  It stays out of the way — a small pill in the corner ("1 question ·
  *  ticket-to-pr › plan") that opens into a panel over the page, never pushing
- *  the page down, and folds back to the pill with —. The
- *  panel walks one question at a time ("1 of 3", Next / Back), offers the
+ *  the page down, and folds back to the pill with —. With several steps
+ *  waiting, the panel lists them (pipeline › step, how many questions, how
+ *  long) and answers the one you pick; what you start on one is kept while
+ *  you look at another. The panel walks one question at a time ("1 of 3", Next / Back), offers the
  *  agent's options (one, or several when it asks for that) and a box for your
  *  own words, and sends every answer at once. Only the asking step waits;
  *  the rest of its run carries on, so nothing here is urgent.
@@ -111,9 +113,11 @@ export function QuestionDockView({
   const where = `${item.orchestrationName} › ${item.phaseName}`;
   const count = items.reduce((n, q) => n + q.questions.length, 0);
 
-  if (!expanded) {
-    return (
-      <View style={styles.anchor} pointerEvents="box-none">
+  // The panel stays mounted while folded, so answers you have started — on
+  // any waiting step — are still there when you open it again.
+  return (
+    <View style={styles.anchor} pointerEvents="box-none">
+      {!expanded ? (
         <Pressable
           testID="question-pill"
           onPress={onToggle}
@@ -129,44 +133,62 @@ export function QuestionDockView({
           </Text>
           <Text style={styles.pillChevron}>▴</Text>
         </Pressable>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.anchor} pointerEvents="box-none">
-      <View testID="question-panel" style={styles.panel}>
+      ) : null}
+      <View testID="question-panel" style={[styles.panel, !expanded && styles.hidden]}>
         <View style={styles.head}>
-          <Text style={styles.title}>? Question for you</Text>
+          <Text style={styles.title}>
+            {items.length > 1 ? `? ${items.length} steps are waiting on you` : '? Question for you'}
+          </Text>
           <View style={styles.spacer} />
-          {items.length > 1 ? (
-            <View style={styles.switcher}>
-              <SmallButton
-                label="‹"
-                hint="Previous waiting step"
-                disabled={index === 0}
-                onPress={() => onSelect(items[index - 1].questionId)}
-              />
-              <Text style={styles.switcherText}>{`${index + 1} of ${items.length} steps`}</Text>
-              <SmallButton
-                label="›"
-                hint="Next waiting step"
-                disabled={index === items.length - 1}
-                onPress={() => onSelect(items[index + 1].questionId)}
-              />
-            </View>
-          ) : null}
           <SmallButton label="—" hint="Minimize" onPress={onToggle} />
         </View>
-        <View style={styles.whereRow}>
-          <Text style={styles.where} numberOfLines={1}>
-            {where}
-          </Text>
-          <Text style={styles.waited}>
-            {`waiting ${formatDuration(Math.max(0, now - item.ts))} · the rest of the run carries on`}
-          </Text>
-        </View>
-        <QuestionStepper key={item.questionId} item={item} onSent={() => onSent(item.questionId)} />
+        {items.length > 1 ? (
+          <View style={styles.list}>
+            {items.map(it => {
+              const here = it.questionId === item.questionId;
+              const n = it.questions.length;
+              return (
+                <Pressable
+                  key={it.questionId}
+                  onPress={() => onSelect(it.questionId)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: here }}
+                  accessibilityLabel={`Answer ${it.orchestrationName} › ${it.phaseName}`}
+                  style={state => [
+                    styles.row,
+                    (state as { hovered?: boolean }).hovered && styles.rowHover,
+                    here && styles.rowHere,
+                  ]}>
+                  <View style={[styles.rowMark, here && styles.rowMarkHere]} />
+                  <Text style={[styles.rowWhere, here && styles.rowWhereHere]} numberOfLines={1}>
+                    {it.orchestrationName}
+                    <Text style={styles.rowStep}>{` › ${it.phaseName}`}</Text>
+                  </Text>
+                  <View style={styles.spacer} />
+                  <Text style={styles.rowMeta}>
+                    {`${n === 1 ? '1 question' : `${n} questions`} · ${formatDuration(Math.max(0, now - it.ts))}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.whereRow}>
+            <Text style={styles.where} numberOfLines={1}>
+              {where}
+            </Text>
+            <Text style={styles.waited}>
+              {`waiting ${formatDuration(Math.max(0, now - item.ts))} · the rest of the run carries on`}
+            </Text>
+          </View>
+        )}
+        {/* Every waiting step's questions stay mounted — only the chosen one
+            shows — so switching steps keeps what you picked on the others. */}
+        {items.map(it => (
+          <View key={it.questionId} style={it.questionId === item.questionId ? null : styles.hidden}>
+            <QuestionStepper item={it} onSent={() => onSent(it.questionId)} />
+          </View>
+        ))}
         <Pressable onPress={() => onOpenRun(item.runId)} accessibilityRole="link">
           <Text style={styles.link}>View run</Text>
         </Pressable>
@@ -405,10 +427,26 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 8 },
   },
+  hidden: { display: 'none' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   title: { fontSize: 14, fontWeight: '700', color: violet },
-  switcher: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  switcherText: { fontSize: 12, color: '#6b7280' },
+  list: { gap: 4, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 10 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  rowHover: { backgroundColor: '#f9fafb' },
+  rowHere: { backgroundColor: '#f5f3ff' },
+  rowMark: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#d1d5db' },
+  rowMarkHere: { backgroundColor: '#7c3aed' },
+  rowWhere: { fontSize: 13, fontWeight: '600', color: '#374151', flexShrink: 1 },
+  rowWhereHere: { color: '#111827' },
+  rowStep: { fontWeight: '400', color: '#6b7280' },
+  rowMeta: { fontSize: 12, color: '#6b7280' },
   whereRow: { gap: 2 },
   where: { fontSize: 13, fontWeight: '600', color: '#111827' },
   waited: { fontSize: 11, color: '#6b7280' },

@@ -5,6 +5,7 @@
  * question. A running Result card offers an Answer chip that opens it.
  */
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import type { WaitingQuestion } from '../src/api';
 import type { RunEvent } from '../src/llm/executor';
@@ -87,7 +88,9 @@ describe('question dock', () => {
     const d = dock([waiting()], false, { onToggle: toggle });
     expect(d.text()).toContain('3 questions for you');
     expect(d.text()).toContain('flow › plan');
-    expect(d.text()).not.toContain('Which database?');
+    // The panel stays mounted (so started answers survive) but is not shown.
+    const panel = d.tree.root.find(n => n.props.testID === 'question-panel' && typeof n.type !== 'string');
+    expect(StyleSheet.flatten(panel.props.style).display).toBe('none');
     d.press('Open questions');
     expect(toggle).toHaveBeenCalled();
   });
@@ -139,14 +142,50 @@ describe('question dock', () => {
     expect(d.text()).toContain('Which database?');
   });
 
-  test('several steps waiting: switch between them', () => {
+  test('several steps waiting: a list of them, and the one you pick is answered', () => {
     const select = jest.fn();
-    const d = dock([waiting(), waiting({ questionId: 'q2', phaseName: 'review', runId: 'run-10' })], true, {
-      onSelect: select,
-    });
-    expect(d.text()).toContain('1 of 2 steps');
-    d.press('Next waiting step');
+    const d = dock(
+      [waiting(), waiting({ questionId: 'q2', phaseName: 'review', orchestrationName: 'notes', runId: 'run-10', ts: 30_000 })],
+      true,
+      { onSelect: select },
+    );
+    expect(d.text()).toContain('2 steps are waiting on you');
+    expect(d.text()).toContain('3 questions · 1m');
+    expect(d.text()).toContain('3 questions · 35s');
+    d.press('Answer notes › review');
     expect(select).toHaveBeenCalledWith('q2');
+  });
+
+  test('what you picked on one step is kept while you look at another, and while folded', () => {
+    const OTHER = [{ question: 'Which audience?', header: 'Audience', options: [opt('Customers'), opt('Developers')], multiSelect: false }];
+    function Stateful() {
+      const [at, setAt] = React.useState<string | null>(null);
+      const [open, setOpen] = React.useState(true);
+      return (
+        <QuestionDockView
+          items={[waiting(), waiting({ questionId: 'q2', phaseName: 'outline', orchestrationName: 'notes', questions: OTHER })]}
+          expanded={open}
+          currentId={at}
+          onSelect={setAt}
+          onToggle={() => setOpen(o => !o)}
+          onSent={() => undefined}
+          onOpenRun={() => undefined}
+          now={65_000}
+        />
+      );
+    }
+    const d = harness(<Stateful />);
+    const checked = (label: string) => d.find(label).props.accessibilityState.checked;
+    d.press('Postgres');
+    d.press('Answer notes › outline');
+    d.press('Developers');
+    d.press('Answer flow › plan');
+    expect(checked('Postgres')).toBe(true);
+    d.press('Minimize');
+    expect(d.text()).toContain('4 questions for you');
+    d.press('Open questions');
+    expect(checked('Postgres')).toBe(true);
+    expect(checked('Developers')).toBe(true);
   });
 });
 
