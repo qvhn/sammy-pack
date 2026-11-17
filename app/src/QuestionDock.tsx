@@ -120,6 +120,8 @@ export function QuestionDockView({
   onOpenRun: (runId: string) => void;
   now?: number;
 }) {
+  // The open step's questions folded away (its row still listed).
+  const [stepFolded, setStepFolded] = useState(false);
   if (items.length === 0) return null;
   const index = Math.max(0, items.findIndex(q => q.questionId === currentId));
   const item = items[index];
@@ -149,59 +151,66 @@ export function QuestionDockView({
       ) : null}
       <View testID="question-panel" style={[styles.panel, !expanded && styles.hidden]}>
         <View style={styles.head}>
-          <Text style={styles.title}>
-            {items.length > 1 ? `? ${items.length} steps are waiting on you` : '? Question for you'}
-          </Text>
-          <View style={styles.spacer} />
+          {/* The whole title folds the panel back to the pill, like —. */}
+          <Pressable
+            onPress={onToggle}
+            accessibilityRole="button"
+            accessibilityLabel="Fold questions"
+            style={styles.headTitle}>
+            <Text style={styles.title}>
+              {items.length > 1 ? `? ${items.length} steps are waiting on you` : '? Question for you'}
+            </Text>
+          </Pressable>
           <SmallButton label="—" hint="Minimize" onPress={onToggle} />
         </View>
-        {items.length > 1 ? (
-          <View style={styles.list}>
-            {items.map(it => {
-              const here = it.questionId === item.questionId;
-              const n = it.questions.length;
-              return (
+        {/* One row per waiting step; the open one shows its questions right
+            under it, and pressing it again folds them away. Every step's
+            questions stay mounted, hidden when folded, so what you picked on
+            one is still there after looking at another. */}
+        <View style={styles.list}>
+          {items.map(it => {
+            const here = it.questionId === item.questionId;
+            const open = here && !stepFolded;
+            const n = it.questions.length;
+            const waited = formatDuration(Math.max(0, now - it.ts));
+            return (
+              <View key={it.questionId} style={styles.group}>
                 <Pressable
-                  key={it.questionId}
-                  onPress={() => onSelect(it.questionId)}
+                  onPress={() => {
+                    if (here) setStepFolded(f => !f);
+                    else {
+                      onSelect(it.questionId);
+                      setStepFolded(false);
+                    }
+                  }}
                   accessibilityRole="tab"
-                  accessibilityState={{ selected: here }}
+                  accessibilityState={{ selected: here, expanded: open }}
                   accessibilityLabel={`Answer ${it.orchestrationName} › ${it.phaseName}`}
                   style={state => [
                     styles.row,
                     (state as { hovered?: boolean }).hovered && styles.rowHover,
                     here && styles.rowHere,
                   ]}>
-                  <View style={[styles.rowMark, here && styles.rowMarkHere]} />
+                  <Text style={styles.rowChevron}>{open ? '▾' : '▸'}</Text>
                   <Text style={[styles.rowWhere, here && styles.rowWhereHere]} numberOfLines={1}>
                     {it.orchestrationName}
                     <Text style={styles.rowStep}>{` › ${it.phaseName}`}</Text>
                   </Text>
                   <View style={styles.spacer} />
                   <Text style={styles.rowMeta}>
-                    {`${n === 1 ? '1 question' : `${n} questions`} · ${formatDuration(Math.max(0, now - it.ts))}`}
+                    {`${n === 1 ? '1 question' : `${n} questions`} · waiting ${waited}`}
                   </Text>
                 </Pressable>
-              );
-            })}
-          </View>
-        ) : (
-          <View style={styles.whereRow}>
-            <Text style={styles.where} numberOfLines={1}>
-              {where}
-            </Text>
-            <Text style={styles.waited}>
-              {`waiting ${formatDuration(Math.max(0, now - item.ts))} · the rest of the run carries on`}
-            </Text>
-          </View>
-        )}
-        {/* Every waiting step's questions stay mounted — only the chosen one
-            shows — so switching steps keeps what you picked on the others. */}
-        {items.map(it => (
-          <View key={it.questionId} style={it.questionId === item.questionId ? null : styles.hidden}>
-            <QuestionStepper item={it} onSent={() => onSent(it.questionId)} />
-          </View>
-        ))}
+                <View style={open ? styles.groupBody : styles.hidden}>
+                  <QuestionStepper item={it} onSent={() => onSent(it.questionId)} />
+                </View>
+              </View>
+            );
+          })}
+        </View>
+        {items.length === 1 ? (
+          <Text style={styles.waited}>Only this step waits; the rest of the run carries on.</Text>
+        ) : null}
         <Pressable onPress={() => onOpenRun(item.runId)} accessibilityRole="link">
           <Text style={styles.link}>View run</Text>
         </Pressable>
@@ -442,6 +451,7 @@ const styles = StyleSheet.create({
   },
   hidden: { display: 'none' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  headTitle: { flex: 1 },
   title: { fontSize: 14, fontWeight: '700', color: violet },
   list: { gap: 4, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', paddingBottom: 10 },
   row: {
@@ -454,14 +464,13 @@ const styles = StyleSheet.create({
   },
   rowHover: { backgroundColor: '#f9fafb' },
   rowHere: { backgroundColor: '#f5f3ff' },
-  rowMark: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#d1d5db' },
-  rowMarkHere: { backgroundColor: '#7c3aed' },
+  rowChevron: { width: 14, fontSize: 14, fontWeight: '700', color: violet },
+  group: { gap: 8 },
+  groupBody: { paddingHorizontal: 4, paddingBottom: 4 },
   rowWhere: { fontSize: 13, fontWeight: '600', color: '#374151', flexShrink: 1 },
   rowWhereHere: { color: '#111827' },
   rowStep: { fontWeight: '400', color: '#6b7280' },
   rowMeta: { fontSize: 12, color: '#6b7280' },
-  whereRow: { gap: 2 },
-  where: { fontSize: 13, fontWeight: '600', color: '#111827' },
   waited: { fontSize: 11, color: '#6b7280' },
   spacer: { flex: 1 },
   link: { fontSize: 12, fontWeight: '600', color: '#2563eb' },

@@ -167,10 +167,40 @@ describe('question dock', () => {
       { onSelect: select },
     );
     expect(d.text()).toContain('2 steps are waiting on you');
-    expect(d.text()).toContain('3 questions · 1m');
-    expect(d.text()).toContain('3 questions · 35s');
+    expect(d.text()).toContain('3 questions · waiting 1m');
+    expect(d.text()).toContain('3 questions · waiting 35s');
     d.press('Answer notes › review');
     expect(select).toHaveBeenCalledWith('q2');
+  });
+
+  test('a step folds and unfolds from its row, keeping what you picked', () => {
+    const d = dock([waiting()], true);
+    const stepShown = () => {
+      const body = d.tree.root.find(n => n.props.accessibilityLabel === 'Postgres' && n.props.onPress).parent;
+      let node: typeof body | null = body;
+      while (node) {
+        if (StyleSheet.flatten(node.props?.style)?.display === 'none') return false;
+        node = node.parent;
+      }
+      return true;
+    };
+    d.press('Postgres');
+    expect(stepShown()).toBe(true);
+    expect(d.find('Answer flow › plan').props.accessibilityState.expanded).toBe(true);
+    d.press('Answer flow › plan');
+    expect(stepShown()).toBe(false);
+    expect(d.find('Answer flow › plan').props.accessibilityState.expanded).toBe(false);
+    expect(d.text()).toContain('▸');
+    d.press('Answer flow › plan');
+    expect(stepShown()).toBe(true);
+    expect(d.find('Postgres').props.accessibilityState.checked).toBe(true);
+  });
+
+  test('the panel title folds it back to the pill', () => {
+    const toggle = jest.fn();
+    const d = dock([waiting()], true, { onToggle: toggle });
+    d.press('Fold questions');
+    expect(toggle).toHaveBeenCalled();
   });
 
   test('what you picked on one step is kept while you look at another, and while folded', () => {
