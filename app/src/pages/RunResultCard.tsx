@@ -22,7 +22,7 @@
  *  so the card works for runs recorded before it existed. The page decides
  *  which actions exist by passing their handlers. */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRuns, type Run } from '../store/runs';
 import { requestRun } from '../store/runSelection';
@@ -69,12 +69,21 @@ export function RunResultCard({
   onGate?: (decision: GateDecision, message?: string) => void | Promise<void>;
 }) {
   const now = useTicker(run.status === 'running' || run.status === 'paused');
-  const result = useMemo(
+  const derived = useMemo(
     () => deriveRunResult(run, now),
     // `run.events` is mutated in place; eventVersion says when it grew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [run, run.eventVersion, run.events, run.status, now],
   );
+  // The end cost stays up until the card is dismissed. A copy of the run
+  // without its events (a list summary carries no cost) would read $0.00;
+  // keep the last cost this run showed instead.
+  const lastCost = useRef<{ id: string; usd: number } | null>(null);
+  if (derived.costUsd > 0 || run.events.length > 0) lastCost.current = { id: run.id, usd: derived.costUsd };
+  const result =
+    run.events.length === 0 && derived.costUsd === 0 && lastCost.current?.id === run.id
+      ? { ...derived, costUsd: lastCost.current.usd }
+      : derived;
 
   const [collapsed, toggle] = useCollapsed();
   const asked = useMemo(

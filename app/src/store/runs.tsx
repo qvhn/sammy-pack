@@ -636,6 +636,15 @@ export function RunsProvider({ children }: { children: ReactNode }) {
             fetchFullRun(fresh.id);
           }
         }
+        // A run this tab holds events for — it finished here, its stream
+        // merging text deltas — but fewer than the server counts: load the
+        // full run, keeping the copy we have on screen until it lands (below).
+        for (const fresh of list) {
+          if (fresh.id === activeId || liveIds.has(fresh.id) || hydratedIds.current.has(fresh.id)) continue;
+          const old = historyRef.current.find(r => r.id === fresh.id);
+          const freshVersion = fresh.eventVersion ?? fresh.events?.length ?? 0;
+          if (old && old.events.length > 0 && old.events.length < freshVersion) fetchFullRun(fresh.id);
+        }
         setHistory(prev => {
           // First copy wins (see `history`): it is the newest, full one.
           const prevById = new Map<string, Run>();
@@ -690,6 +699,12 @@ export function RunsProvider({ children }: { children: ReactNode }) {
                 old.events.length > 0
               ) {
                 return { ...base, events: old.events, eventVersion: old.events.length };
+              }
+              // A settled run whose full copy is on its way (fetched above):
+              // keep showing the events we have — its Result card's branch,
+              // steps, output and end cost — rather than blank it for a beat.
+              if (old && old.events.length > 0 && old.status === fresh.status) {
+                return { ...base, events: old.events, eventVersion: old.eventVersion };
               }
               return base;
             });

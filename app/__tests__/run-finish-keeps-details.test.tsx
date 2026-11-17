@@ -50,6 +50,10 @@ const SUMMARY = {
 
 const fetched: string[] = [];
 let finished = false;
+// The full-run fetch waits for the test to let it through, so what the card
+// shows while it is on its way can be checked.
+let releaseFull: () => void = () => undefined;
+let fullGate: Promise<void> = Promise.resolve();
 
 function mockFetch() {
   (globalThis as { fetch?: unknown }).fetch = jest.fn(async (url: string, init?: RequestInit) => {
@@ -64,7 +68,10 @@ function mockFetch() {
     });
     if (method === 'POST' && path === '/api/runs/start') return reply({ id: 'r1' });
     if (method === 'GET' && path === '/api/runs') return reply(finished ? [SUMMARY] : []);
-    if (method === 'GET' && path === '/api/runs/r1') return reply({ ...SUMMARY, events: SERVER_EVENTS });
+    if (method === 'GET' && path === '/api/runs/r1') {
+      await fullGate;
+      return reply({ ...SUMMARY, events: SERVER_EVENTS });
+    }
     return reply({});
   });
 }
@@ -93,6 +100,7 @@ beforeEach(() => {
   FakeEventSource.instances = [];
   fetched.length = 0;
   finished = false;
+  fullGate = new Promise(r => (releaseFull = r));
   g.EventSource = FakeEventSource;
   g.localStorage = {
     getItem: (k: string) => (k === 'sammy.authMode' ? 'claude-code-proxy' : null),
@@ -133,10 +141,15 @@ test('the finished run is loaded in full after the poll swaps in its summary', a
   expect(ctx!.active).toBeNull();
   expect(ctx!.history[0].events.length).toBeLessThan(SERVER_EVENTS.length);
 
-  // The next poll lists the server's summary; then let everything settle.
+  // The next poll lists the server's summary. The card never goes blank in
+  // between: the copy on screen stays until the full run lands.
   await ReactTestRenderer.act(async () => {
     jest.advanceTimersByTime(4000);
   });
+  for (let i = 0; i < 5; i++) await ReactTestRenderer.act(async () => {});
+  expect(fetched).toContain('GET /api/runs/r1');
+  expect(ctx!.history[0].events.length).toBeGreaterThan(0);
+  releaseFull();
   for (let i = 0; i < 5; i++) await ReactTestRenderer.act(async () => {});
 
   expect(fetched).toContain('GET /api/runs/r1');
