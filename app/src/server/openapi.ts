@@ -451,6 +451,23 @@ export function buildOpenApiDoc(): object {
           },
         },
       },
+      '/api/questions': {
+        get: {
+          tags: ['runs'],
+          summary: 'Questions agents are waiting on, across your runs',
+          description:
+            'Every question a step’s agent is waiting on right now, oldest ' +
+            'first: `{ runId, orchestrationName, phaseName, questionId, ' +
+            'questions, ts }`. Answer one with POST ' +
+            '/api/runs/{id}/questions/{questionId}.',
+          responses: {
+            '200': jsonResponse('The waiting questions.', {
+              type: 'object',
+              properties: { questions: { type: 'array', items: { type: 'object' } } },
+            }),
+          },
+        },
+      },
       '/api/runs/{id}/questions/{questionId}': {
         post: {
           tags: ['runs'],
