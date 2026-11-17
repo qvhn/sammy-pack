@@ -159,6 +159,29 @@ describe('harness run', () => {
     expect(verdicts[5]).toBeNull();
   });
 
+  it('a question waits as long as the step in progress allows', async () => {
+    const timeouts: Array<number | undefined> = [];
+    const timed: Node = {
+      ...tree,
+      phases: [{ ...tree.phases![0], questionTimeout: 60 }, tree.phases![1], tree.phases![2]],
+    };
+    const { streamFn } = scriptedAgent([
+      async function* (t, p) {
+        const read = () => (typeof p.questionTimeout === 'function' ? p.questionTimeout() : p.questionTimeout);
+        await t.start_step({ step: 'plan' });
+        timeouts.push(read());
+        await t.complete_step({ step: 'plan', output: 'p' });
+        await t.start_step({ step: 'shout' });
+        await t.run_step({ step: 'shout' });
+        await t.start_step({ step: 'build' });
+        timeouts.push(read());
+        await t.complete_step({ step: 'build', output: 'b' });
+      },
+    ]);
+    await run(timed, streamFn);
+    expect(timeouts).toEqual([60, undefined]);
+  });
+
   it('a gate ends the leg; once approved the next leg resumes the same session', async () => {
     const gated: Node = { ...tree, phases: [tree.phases![0], { ...tree.phases![1], lock: true }, tree.phases![2]] };
     const asked: string[] = [];

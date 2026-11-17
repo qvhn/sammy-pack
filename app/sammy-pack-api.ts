@@ -7652,26 +7652,46 @@ export async function mountSammyApi(
       //   questions, ts }. The page's question dock polls it so a question
       //   finds you wherever you are; answer through
       //   POST /api/runs/:id/questions/:questionId.
+      /** `runId/questionId` → the dock's row for a waiting question, taken
+       *  from the run's log once rather than on every poll. */
+      const waitingQuestionRows = new Map<string, Record<string, unknown>>();
       server.middlewares.use('/api/questions', answered(async (req, res) => {
         if ((req.method ?? 'GET').toUpperCase() !== 'GET') {
           return sendError(res, 405, 'Method not allowed');
         }
+        const callerId = extractOwnerId(req);
         const out: Array<Record<string, unknown>> = [];
         for (const runId of runsWithOpenQuestions()) {
-          const run = await store.getRun(runId, extractOwnerId(req));
-          if (!run) continue;
-          const open = new Set(openQuestionIds(runId));
-          for (const e of run.events as RunEvent[]) {
-            if (e.type !== 'question' || !open.has(e.questionId)) continue;
-            out.push({
-              runId,
-              orchestrationName: run.orchestrationName,
-              phaseName: e.phaseName,
-              questionId: e.questionId,
-              questions: e.questions,
-              ts: e.ts,
-            });
+          // Owner check on the summary row: every open tab polls this every
+          // few seconds, and the run's full event log is only needed once
+          // per question, to find its (scrubbed) logged copy.
+          if (!(await store.getRunSummary(runId, callerId))) continue;
+          const open = openQuestionIds(runId);
+          if (open.some(id => !waitingQuestionRows.has(`${runId}/${id}`))) {
+            const run = await store.getRun(runId, callerId);
+            if (!run) continue;
+            for (const e of run.events as RunEvent[]) {
+              if (e.type !== 'question' || !open.includes(e.questionId)) continue;
+              waitingQuestionRows.set(`${runId}/${e.questionId}`, {
+                runId,
+                orchestrationName: run.orchestrationName,
+                phaseName: e.phaseName,
+                questionId: e.questionId,
+                questions: e.questions,
+                ts: e.ts,
+              });
+            }
           }
+          for (const id of open) {
+            const row = waitingQuestionRows.get(`${runId}/${id}`);
+            if (row) out.push(row);
+          }
+        }
+        // Forget questions no longer waiting. Any caller's poll prunes; a row
+        // is only ever served after that caller's own owner check above.
+        for (const key of [...waitingQuestionRows.keys()]) {
+          const [runId, id] = key.split('/');
+          if (!openQuestionIds(runId).includes(id)) waitingQuestionRows.delete(key);
         }
         out.sort((a, b) => Number(a.ts) - Number(b.ts));
         return sendJson(res, 200, { questions: out });

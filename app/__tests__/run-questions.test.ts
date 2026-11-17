@@ -99,3 +99,26 @@ describe('the page’s view', () => {
     expect(answerText(q('?', true), ['B'], 'and C')).toBe('B, and C');
   });
 });
+
+describe('answers keyed by the logged copy of a question', () => {
+  test('a question whose text was scrubbed in the log is answered by position', async () => {
+    // The page answers from the event log, where a secret in the question's
+    // text reads [REDACTED]; the agent waits under the original text.
+    const wait = waitForAnswer('run-s', 'q1', [q('Use token abc123?'), q('Two?')], {
+      signal: new AbortController().signal,
+    });
+    expect(answerQuestion('run-s', 'q1', { 'Use token [REDACTED]?': 'A', 'Two?': 'B' })).toEqual({ ok: true });
+    await expect(wait).resolves.toEqual({
+      outcome: 'answered',
+      answers: { 'Use token abc123?': 'A', 'Two?': 'B' },
+    });
+  });
+
+  test('a stray key does not stand in for a missing answer', () => {
+    void waitForAnswer('run-t', 'q1', [q('One?'), q('Two?')], { signal: new AbortController().signal });
+    expect(answerQuestion('run-t', 'q1', { 'One?': 'A', 'Other?': 'B', 'Third?': 'C' })).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+  });
+});

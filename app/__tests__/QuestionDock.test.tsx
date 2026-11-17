@@ -9,7 +9,7 @@ import { StyleSheet } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import type { WaitingQuestion } from '../src/api';
 import type { RunEvent } from '../src/llm/executor';
-import { QuestionDockView } from '../src/QuestionDock';
+import { QuestionDock, QuestionDockView, openQuestionDock } from '../src/QuestionDock';
 import { RunResultCard } from '../src/pages/RunResultCard';
 import type { Run } from '../src/store/runs';
 
@@ -77,6 +77,23 @@ describe('question dock', () => {
     fetchMock.mockReset();
     fetchMock.mockResolvedValue({ ok: true, text: async () => '{"ok":true}' });
     (globalThis as { fetch?: unknown }).fetch = fetchMock;
+  });
+
+  test('Answer on a run newer than the last poll opens on that run, not another', async () => {
+    const a = waiting({ runId: 'run-a', orchestrationName: 'alpha', questionId: 'qa', ts: 1 });
+    const b = waiting({ runId: 'run-b', orchestrationName: 'beta', questionId: 'qb', ts: 2 });
+    let listed = [a];
+    fetchMock.mockImplementation(async () => ({ ok: true, json: async () => ({ questions: listed }) }));
+    const d = harness(<QuestionDock onOpenRun={() => undefined} />);
+    await ReactTestRenderer.act(async () => undefined);
+    listed = [a, b]; // run-b's card saw its question before the dock polled
+    await ReactTestRenderer.act(async () => {
+      openQuestionDock('run-b');
+    });
+    const current = d.tree.root.findAll(
+      n => n.props.accessibilityState?.selected === true && typeof n.props.onPress === 'function',
+    );
+    expect(current.map(n => n.props.accessibilityLabel)).toEqual(['Answer beta › plan']);
   });
 
   test('nothing waiting — nothing drawn', () => {

@@ -59,12 +59,26 @@ export function answersProblem(
   if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
     return '`answers` must be an object of question text → answer.';
   }
-  const given = answers as Record<string, unknown>;
-  for (const q of questions) {
-    const a = given[q.question];
-    if (typeof a !== 'string' || !a.trim()) return `No answer for "${q.question}".`;
+  for (let i = 0; i < questions.length; i++) {
+    const a = answerAt(questions, answers as Record<string, unknown>, i);
+    if (typeof a !== 'string' || !a.trim()) return `No answer for "${questions[i].question}".`;
   }
   return null;
+}
+
+/** The answer given for question `i`: keyed by its text — or, when a key
+ *  doesn't match, by position among the answers. The page answers from the
+ *  logged copy of the question, whose text is secret-scrubbed, so a question
+ *  that quoted a secret comes back keyed by the scrubbed text. */
+function answerAt(
+  questions: QuestionItem[],
+  given: Record<string, unknown>,
+  i: number,
+): unknown {
+  const q = questions[i];
+  if (Object.prototype.hasOwnProperty.call(given, q.question)) return given[q.question];
+  const values = Object.values(given);
+  return values.length === questions.length ? values[i] : undefined;
 }
 
 /** Deliver a person's answers. */
@@ -80,9 +94,9 @@ export function answerQuestion(
   const problem = answersProblem(pending.questions, answers);
   if (problem) return { ok: false, status: 400, reason: problem };
   const clean: Record<string, string> = {};
-  for (const q of pending.questions) {
-    clean[q.question] = String((answers as Record<string, unknown>)[q.question]).trim();
-  }
+  pending.questions.forEach((q, i) => {
+    clean[q.question] = String(answerAt(pending.questions, answers as Record<string, unknown>, i)).trim();
+  });
   pending.settle({ outcome: 'answered', answers: clean });
   return { ok: true };
 }

@@ -7,6 +7,7 @@
 
 import { runOrchestration, type RunEvent, type StreamFn } from '../src/llm/executor';
 import type { Node } from '../src/types';
+import { agentSlots } from '../src/llm/concurrency';
 
 jest.mock('../src/api', () => ({
   listAgents: async () => [],
@@ -186,4 +187,53 @@ test.each(['parallel', 'map'])('a %s group’s own deadline waits for a question
   expect(types).not.toContain('composite-partial');
   expect(events.find(e => e.type === 'phase-end' && e.phaseName === 'ask')).toMatchObject({ output: 'picked Blue' });
   expect(types[types.length - 1]).toBe('run-end');
+});
+
+test('a step waiting on a person lends its agent slot to others meanwhile', async () => {
+  // One slot: if the asker kept it while waiting, its sibling could not
+  // start until the answer came — and the answer only comes once it has.
+  const before = agentSlots.limit;
+  agentSlots.setLimit(1);
+  try {
+    const { streamFn, release } = setup();
+    const events = await run(
+      {
+        name: 'flow',
+        phases: [
+          {
+            name: 'both',
+            parallel: [
+              { name: 'ask', agent: 'agents/asker.md' },
+              { name: 'work', agent: 'agents/worker.md' },
+            ],
+          },
+        ],
+      },
+      streamFn,
+      e => {
+        if (e.type === 'phase-end' && e.phaseName === 'work') release();
+      },
+    );
+    expect(events.find(e => e.type === 'phase-end' && e.phaseName === 'ask')).toMatchObject({ output: 'picked Blue' });
+    expect(events[events.length - 1].type).toBe('run-end');
+    expect(agentSlots.inUse).toBe(0);
+  } finally {
+    agentSlots.setLimit(before);
+  }
+});
+
+test('an agent that dies while its question waits closes the question', async () => {
+  const streamFn: StreamFn = async function* () {
+    yield { type: 'question', id: 'q1', questions };
+    throw new Error('agent process exited');
+  };
+  const events = await run(
+    { name: 'flow', phases: [{ name: 'ask', agent: 'agents/asker.md', continueOnError: true }] },
+    streamFn,
+    () => undefined,
+  );
+  const asked = at(events, e => e.type === 'question');
+  const closed = at(events, e => e.type === 'question-closed');
+  expect(closed).toBeGreaterThan(asked);
+  expect(events[closed]).toMatchObject({ phaseName: 'ask', questionId: 'q1', outcome: 'cancelled' });
 });

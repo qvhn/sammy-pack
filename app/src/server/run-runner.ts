@@ -431,11 +431,14 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
         ...(failOnToolPrompt ? { failOnToolPrompt } : {}),
         ...(runId
           ? {
-              onQuestion: (q: { id: string; questions: QuestionItem[] }, signal: AbortSignal) =>
-                waitForAnswer(runId, q.id, q.questions, {
+              onQuestion: (q: { id: string; questions: QuestionItem[] }, signal: AbortSignal) => {
+                const timeout =
+                  typeof params.questionTimeout === 'function' ? params.questionTimeout() : params.questionTimeout;
+                return waitForAnswer(runId, q.id, q.questions, {
                   signal,
-                  ...(params.questionTimeout ? { timeoutSeconds: params.questionTimeout } : {}),
-                }),
+                  ...(timeout ? { timeoutSeconds: timeout } : {}),
+                });
+              },
             }
           : {}),
         subagents: params.subagents,

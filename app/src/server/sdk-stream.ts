@@ -435,7 +435,9 @@ export async function* streamSdk(
           return askPerson(input, options?.toolUseID ?? globalThis.crypto.randomUUID(), options?.signal);
         }
         if (isToolPreApproved(toolName, allowlist)) {
-          return { behavior: 'allow', updatedInput: {} };
+          // Pass the call through as asked: `updatedInput` replaces the
+          // tool's input, so an empty object would run it with no arguments.
+          return { behavior: 'allow', updatedInput: input };
         }
         if (!failOnToolPrompt) {
           // What the SDK does with no hook and no one to ask.
@@ -939,13 +941,20 @@ async function* withSide<T, S>(
 ): AsyncIterable<{ msg: T } | { side: S }> {
   const it = src[Symbol.asyncIterator]();
   let next: Promise<IteratorResult<T>> | null = null;
+  // One wait at a time, kept across messages: a fresh promise per SDK message
+  // (thousands of stream deltas a turn) would be allocated only to be dropped.
+  let pushed: Promise<null> | null = null;
   let finished = false;
   try {
     while (true) {
       while (side.items.length > 0) yield { side: side.items.shift()! };
       next ??= it.next();
-      const r = await Promise.race([next, side.wait().then(() => null)]);
-      if (r === null) continue;
+      pushed ??= side.wait().then(() => null);
+      const r = await Promise.race([next, pushed]);
+      if (r === null) {
+        pushed = null;
+        continue;
+      }
       next = null;
       if (r.done) {
         finished = true;

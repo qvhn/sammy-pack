@@ -14,7 +14,7 @@
  *  Questions come from GET /api/questions (polled while the tab is visible),
  *  so a question from any run finds you — not just the run this tab started. */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { answerRunQuestion, listWaitingQuestions, type WaitingQuestion } from './api';
 import { answerText } from './lib/run-questions';
@@ -56,18 +56,31 @@ export function QuestionDock({ onOpenRun }: { onOpenRun: (runId: string) => void
     return () => clearInterval(tick);
   }, [refresh]);
 
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
+  // The run an "Answer" chip asked for. The chip reads the run's own live
+  // events, so its question can be newer than our last poll: fetch now, and
+  // land on it once it's listed rather than on another run's question.
+  const [wantRun, setWantRun] = useState<string | null>(null);
   useEffect(() => {
     const open = (runId?: string) => {
       setExpanded(true);
-      if (runId) setAt(itemsRef.current.find(q => q.runId === runId)?.questionId ?? null);
+      if (runId) {
+        setWantRun(runId);
+        refresh();
+      }
     };
     openers.add(open);
     return () => {
       openers.delete(open);
     };
-  }, []);
+  }, [refresh]);
+  useEffect(() => {
+    if (!wantRun) return;
+    const hit = items.find(q => q.runId === wantRun);
+    if (hit) {
+      setAt(hit.questionId);
+      setWantRun(null);
+    }
+  }, [items, wantRun]);
 
   const waiting = items.filter(q => !sent.includes(q.questionId));
   return (

@@ -338,6 +338,20 @@ describe('an agent asking the person running it a question', () => {
     expect(decision).not.toHaveProperty('interrupt');
   });
 
+  test('a pre-approved tool runs with the arguments it was called with', async () => {
+    let decision: PermissionResult | null = null;
+    const input = { command: 'ls' };
+    const { queryFn } = fakeQuery(async p => {
+      decision = await p.options!.canUseTool!('Bash', input, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-b',
+      });
+      return [result()];
+    });
+    await drain({ queryFn, tools: ['Bash'], onQuestion: async () => ({ outcome: 'cancelled' }) });
+    expect(decision).toEqual({ behavior: 'allow', updatedInput: input });
+  });
+
   test('without a question handler there is no hook — the SDK handles it as before', async () => {
     const { calls, queryFn } = fakeQuery([result()]);
     await drain({ queryFn });
