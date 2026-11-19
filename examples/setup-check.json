@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/orchestration.schema.json",
+  "name": "setup-check",
+  "description": "Proves a machine can run real pipelines: a zero-token code step, one small agent call on Haiku through the Claude Agent SDK, and a check that fails the run unless the agent answered. Used by /sammy-pack-setup; costs a fraction of a cent.",
+  "lifecycle": {
+    "tags": ["starter"]
+  },
+  "phases": [
+    {
+      "name": "engine",
+      "code": {
+        "source": "return 'engine ok on ' + (input || 'this machine')"
+      }
+    },
+    {
+      "name": "agent",
+      "agent": "agents/writer.md",
+      "model": "haiku",
+      "prompt": "This is a setup check. Reply with the single line SETUP-OK and nothing else.",
+      "timeout": 180
+    },
+    {
+      "name": "verify",
+      "code": {
+        "source": "if (!String(input).includes('SETUP-OK')) throw new Error('the agent did not answer SETUP-OK; it said: ' + String(input).slice(0, 200)); return 'agent ok'"
+      }
+    }
+  ]
+}

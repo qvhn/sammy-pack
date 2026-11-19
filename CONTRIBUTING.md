@@ -29,6 +29,15 @@ npm run web       # the dev server + UI (vite, with the API plugin)
 npm run cli       # the CLI
 ```
 
+In Claude Code, `/sammy-pack-setup` does this for you and proves it works
+with real runs.
+
+Dependencies stay current through Dependabot (`.github/dependabot.yml`):
+every Monday it opens one PR for the Claude Agent SDK and its partners
+(`@anthropic-ai/*`, `@modelcontextprotocol/*`) and one for everything else's
+minor and patch bumps. The SDK carries the Claude Code runtime that runs use,
+so review its PR first. The gate below runs on it like any other PR.
+
 ## The gate
 
 ```bash

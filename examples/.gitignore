@@ -57,6 +57,7 @@
 !score-gate-rollout.json
 !security-watch.json
 !severity-classify.json
+!setup-check.json
 !smoke-test.json
 !idea-to-prototype.json
 !sprint-delivery.json

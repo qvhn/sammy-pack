@@ -12,6 +12,13 @@ in this repo.
   (Other providers — OpenAI / Gemini / Bedrock — can be keyed per-node later
   via Settings; agentic tool-use phases run through the Claude Agent SDK.)
 
+**Shortcut:** in a Claude Code session in this repo, run `/sammy-pack-setup`.
+It checks this machine, installs, tells you if the Claude Agent SDK is behind,
+and proves the setup with a typecheck, the tests, a zero-token run and one
+small agent run (`examples/setup-check.json`, well under a cent), then
+cleans up after itself. Run it again on each new machine, or after pulling
+big changes.
+
 ## Install and launch
 
 ```bash
