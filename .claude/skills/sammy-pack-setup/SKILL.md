@@ -36,7 +36,7 @@ Run these and record each result:
 | Check | Command | Passes when |
 |---|---|---|
 | git | `git --version` | any version |
-| Node | `node --version` | ≥ 22.11 (`.nvmrc` pins 22) |
+| Node | `node --version` | 22.13+ or 24.3+ (`.nvmrc` pins 22); odd-numbered releases such as 23 are outside React Native's range |
 | npm | `npm --version` | any version |
 | Claude Code | `claude --version` | installed |
 | Port | `lsof -i :5173` (Windows: `netstat -ano \| findstr 5173`) | note if busy |

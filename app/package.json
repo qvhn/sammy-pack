@@ -63,9 +63,9 @@
     "@babel/core": "^7.25.2",
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
-    "@react-native-community/cli": "20.1.0",
-    "@react-native-community/cli-platform-android": "20.1.0",
-    "@react-native-community/cli-platform-ios": "20.1.0",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native-community/cli-platform-ios": "20.2.0",
     "@react-native/babel-preset": "0.88.1",
     "@react-native/eslint-config": "0.88.1",
     "@react-native/jest-preset": "0.88.1",
@@ -87,6 +87,6 @@
     "vite": "^6.0.0"
   },
   "engines": {
-    "node": ">= 22.11.0"
+    "node": "^22.13.0 || ^24.3.0 || >= 26.0.0"
   }
 }
