@@ -23,6 +23,21 @@ jest.mock('../src/api', () => ({
 const HOUR = 3_600_000;
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+test('the awake clock loads in a browser, where there is no `process`', () => {
+  // The executor (and with it this clock) is bundled into the web app too.
+  const saved = globalThis.process;
+  let loaded: unknown;
+  jest.isolateModules(() => {
+    (globalThis as { process?: unknown }).process = undefined;
+    try {
+      loaded = require('../src/llm/awake-clock');
+    } finally {
+      globalThis.process = saved;
+    }
+  });
+  expect(typeof (loaded as { awakeNow: unknown }).awakeNow).toBe('function');
+});
+
 describe('the awake clock', () => {
   let wall = 0;
   let mono = 0;
