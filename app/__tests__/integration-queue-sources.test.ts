@@ -1,5 +1,10 @@
 /**
+ * @jest-environment node
+ *
  * QUEUE-SOURCE INTEGRATION — real brokers, real client libraries.
+ *
+ * Runs in plain Node, as the adapters do in production: the React Native
+ * environment resolves the AWS SDK's `react-native` build (untranspiled ESM).
  *
  * SKIPPED unless the matching broker env var is set (same convention as
  * postgres-store.test.ts). Bring the brokers up first:
