@@ -15,6 +15,7 @@ import { Markdown } from '../Markdown';
 import type { CompositeKind, RunEvent } from '../llm/executor';
 import { isProgramPhase, phaseAgentPath } from './phaseKind';
 import { inputTokensOf } from '../lib/spend';
+import { formatDuration } from '../lib/run-result';
 import { totalUsage, useRuns, type Run } from '../store/runs';
 import { takeRequestedRun } from '../store/runSelection';
 import { useToast } from '../store/toast';
@@ -1743,6 +1744,13 @@ export function groupEvents(events: RunEvent[]): Block[] {
           kind: 'meta',
           tone: 'info',
           text: `↩ ${e.phaseName} — recovered via onError (${e.error})`,
+        });
+        break;
+      case 'machine-slept':
+        blocks.push({
+          kind: 'meta',
+          tone: 'info',
+          text: `☾ This computer slept for ${formatDuration(e.sleptMs)}; the run waited and carried on`,
         });
         break;
       case 'node-stalled':

@@ -98,6 +98,7 @@ import {
 } from '../server/sdk-stream';
 import { credentialsToEnv } from '../server/credential-env';
 import { scrubSecrets } from '../server/scrub-secrets';
+import { awakeNow } from './awake-clock';
 import {
   buildHarnessSystemPrompt,
   clipForAgent,
@@ -473,6 +474,13 @@ export type RunEvent =
       type: 'node-recovered';
       phaseName: string;
       error: string;
+      ts: number;
+    }
+  | {
+      /** The machine slept mid-run and has woken. The run waited, and its
+       *  timeouts count awake time only, so nothing timed out over it. */
+      type: 'machine-slept';
+      sleptMs: number;
       ts: number;
     }
   | {
@@ -1450,14 +1458,16 @@ async function* drainWithDeadline<T>(
   let timedOut = false;
   // Time spent waiting on a person's answer doesn't count.
   const watch = questionWatch();
+  // Kept across a deadline timer that fires early after a sleep (see withTimeout).
+  let next: Promise<IteratorResult<T>> | null = null;
   try {
     while (true) {
-      const remaining = deadlineMs + watch.pausedMs() - Date.now();
+      const remaining = deadlineMs + watch.pausedMs() - awakeNow();
       if (remaining <= 0 && !watch.open()) {
         timedOut = true;
         return;
       }
-      const next = it.next();
+      next ??= it.next();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<{ __deadline: true }>(resolve => {
         if (watch.open()) return;
@@ -1470,10 +1480,8 @@ async function* drainWithDeadline<T>(
       } finally {
         if (timer) clearTimeout(timer);
       }
-      if ('__deadline' in result) {
-        timedOut = true;
-        return;
-      }
+      if ('__deadline' in result) continue;
+      next = null;
       if (result.done) return;
       watch.see(result.value);
       yield result.value;
@@ -3932,16 +3940,21 @@ async function* withTimeout<T>(
   seconds: number,
   errOpts?: { nodeName?: string; defaulted?: boolean },
 ): AsyncIterable<T> {
-  const deadline = Date.now() + seconds * 1000;
+  // Counted in awake time: a machine that sleeps mid-step doesn't wake to a
+  // timeout (see awake-clock.ts).
+  const deadline = awakeNow() + seconds * 1000;
   const inner = iter[Symbol.asyncIterator]();
   let endedNormally = false;
   // Time spent waiting on a person's answer doesn't count.
   const watch = questionWatch();
+  // Kept across a timer that fires early (after a sleep, on a platform whose
+  // timers count through it), so the step's next event isn't asked for twice.
+  let next: Promise<IteratorResult<T>> | null = null;
   try {
     while (true) {
-      const remaining = deadline + watch.pausedMs() - Date.now();
+      const remaining = deadline + watch.pausedMs() - awakeNow();
       if (remaining <= 0 && !watch.open()) throw new TimeoutError(seconds, errOpts);
-      const next = inner.next();
+      next ??= inner.next();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<{ timeout: true }>(resolve => {
         if (watch.open()) return;
@@ -3954,7 +3967,10 @@ async function* withTimeout<T>(
       } finally {
         if (timer) clearTimeout(timer);
       }
-      if ('timeout' in result) throw new TimeoutError(seconds, errOpts);
+      // The top of the loop decides: a real deadline throws there, a sleep
+      // waits out what's left.
+      if ('timeout' in result) continue;
+      next = null;
       if (result.done) { endedNormally = true; return; }
       watch.see(result.value);
       yield result.value;
@@ -4012,14 +4028,14 @@ export function questionWatch(): {
       };
       if (typeof e?.questionId !== 'string') return;
       if (e.type === 'question') {
-        if (ids.size === 0) since = Date.now();
+        if (ids.size === 0) since = awakeNow();
         ids.add(e.questionId);
       } else if (e.type === 'question-closed' && ids.delete(e.questionId) && ids.size === 0) {
-        total += Date.now() - since;
+        total += awakeNow() - since;
       }
     },
     open: () => ids.size > 0,
-    pausedMs: () => total + (ids.size > 0 ? Date.now() - since : 0),
+    pausedMs: () => total + (ids.size > 0 ? awakeNow() - since : 0),
   };
 }
 
@@ -4056,13 +4072,18 @@ async function* withStallGuard(
   // downstream `.return()` abandoning us) so the inner dispatch — and its agent
   // slot + SDK stream — is always released.
   let needsReturn = true;
+  // The window counts awake time since the last event: a sleep is not a
+  // stall (see awake-clock.ts). Kept across a timer that fires early after a
+  // sleep so the step's next event isn't asked for twice.
+  let quietSince = awakeNow();
+  let next: Promise<IteratorResult<RunEvent>> | null = null;
   try {
     while (true) {
-      const next = inner.next();
+      next ??= inner.next();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stall = new Promise<{ stalled: true }>((resolve) => {
         if (watch.open()) return;
-        timer = setTimeout(() => resolve({ stalled: true }), stallMs);
+        timer = setTimeout(() => resolve({ stalled: true }), Math.max(0, stallMs - (awakeNow() - quietSince)));
         (timer as unknown as { unref?: () => void }).unref?.();
       });
       let result: IteratorResult<RunEvent> | { stalled: true };
@@ -4071,15 +4092,17 @@ async function* withStallGuard(
       } finally {
         if (timer) clearTimeout(timer);
       }
+      if ('stalled' in result && awakeNow() - quietSince < stallMs) continue;
       if ('stalled' in result) {
         needsReturn = false;
         try { await inner.return?.(undefined); } catch { /* ignore */ }
         yield { type: 'node-stalled', phaseName, stallSeconds, ts: Date.now() };
         throw new StallError(phaseName, stallSeconds);
       }
+      next = null;
       if (result.done) { needsReturn = false; return; }
-      // A real event — progress. The next loop iteration creates a fresh timer,
-      // so the stall window restarts from now.
+      // A real event — progress. The stall window restarts from now.
+      quietSince = awakeNow();
       watch.see(result.value);
       yield result.value;
     }
