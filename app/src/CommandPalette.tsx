@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputInstance } from 'react-native';
 import {
   listAgents,
   listDatasets,
@@ -48,7 +48,7 @@ export function CommandPalette({
   const [query, setQuery] = useState('');
   const [entries, setEntries] = useState<Entry[]>(PAGE_ENTRIES);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const inputRef = useRef<TextInput | null>(null);
+  const inputRef = useRef<TextInputInstance | null>(null);
 
   // Global Cmd/Ctrl+K toggle + Esc close.
   useEffect(() => {

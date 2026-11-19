@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Pressable, Text, View, type ViewStyle } from 'react-native';
+import { Pressable, Text, type HostInstance, type ViewStyle } from 'react-native';
 import { createPortal } from 'react-dom';
 
 /**
@@ -34,7 +34,7 @@ export function Tooltip({
   children: React.ReactNode;
   style?: ViewStyle;
 }) {
-  const ref = useRef<View>(null);
+  const ref = useRef<HostInstance>(null);
   // null = hidden. When shown, holds the trigger's viewport rect so the bubble
   // can anchor itself just below + left-aligned to the badge.
   const [rect, setRect] = useState<{

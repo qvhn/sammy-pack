@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputInstance } from 'react-native';
 import { cloneRepoUrl, locateRepo } from './api';
 import { FolderPicker } from './FolderPicker';
 import { type ExecutionMode, type HarnessFollow, type Node } from './types';
@@ -160,8 +160,8 @@ export function RunInputsModal({
   const [workspaceFollow, setWorkspaceFollow] = useState<HarnessFollow | null>(null);
   // First text field — focused when the dialog opens so the user can type
   // straight away (falls back to the instructions box).
-  const firstFieldRef = useRef<TextInput | null>(null);
-  const instructionsRef = useRef<TextInput | null>(null);
+  const firstFieldRef = useRef<TextInputInstance | null>(null);
+  const instructionsRef = useRef<TextInputInstance | null>(null);
   useEffect(() => {
     setValues({});
     setFiles({});

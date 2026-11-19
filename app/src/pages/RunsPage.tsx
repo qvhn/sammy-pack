@@ -7,6 +7,7 @@ import {
   Text,
   TextInput,
   View,
+  type ScrollViewInstance,
   type StyleProp,
   type TextStyle,
   type ViewStyle,
@@ -2036,7 +2037,7 @@ function BlockList({ events, version, run }: { events: RunEvent[]; version: numb
   // showed "(starting…)" forever. `events.length` covers in-place growth.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blocks = useMemo(() => groupEvents(events), [version, events, events.length]);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   // Auto-pin to the bottom as new events stream in. Without this, the
   // viewer keeps the old scroll position and the user has to manually
   // chase the bottom every time a tool fires.
