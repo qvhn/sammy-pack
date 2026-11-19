@@ -27,7 +27,8 @@ type Clocks = { wall: () => number; mono: () => number; platform: string };
 const realClocks: Clocks = {
   wall: () => Date.now(),
   mono: () => performance.now(),
-  platform: process.platform,
+  // The executor also runs in the browser, where there is no `process`.
+  platform: typeof process === 'undefined' ? 'browser' : process.platform,
 };
 
 let clocks: Clocks = realClocks;
