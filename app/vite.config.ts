@@ -29,9 +29,10 @@ export default defineConfig({
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'development'),
   },
   optimizeDeps: {
-    esbuildOptions: {
-      resolveExtensions: ['.web.tsx', '.web.ts', '.tsx', '.ts', '.jsx', '.js'],
-      loader: { '.js': 'jsx' },
+    rolldownOptions: {
+      resolve: { extensions: ['.web.tsx', '.web.ts', '.tsx', '.ts', '.jsx', '.js'] },
+      // React Native packages ship JSX in plain .js files.
+      moduleTypes: { '.js': 'jsx' },
     },
   },
   build: {
