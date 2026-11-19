@@ -83,6 +83,11 @@ Every run — live or historical — lives on the **Runs** page:
   approve it, here or on the Pipelines page.
 - **Pause / resume** — resume re-runs from the last checkpoint, skip-replaying
   completed phases at zero tokens.
+- **Questions** — an agent that needs something only you know asks it in
+  the question dock (bottom right, on every page). Only that step waits;
+  pick an answer or type your own and it carries on.
+- **Sleep** — close the laptop mid-run and the run waits with it: timeouts
+  count only awake time, and the log notes how long the machine slept.
 - **Cancel** — aborts the SDK subprocess mid-call.
 - **Fork** — branch a finished run at any phase: completed leaves replay from
   checkpoint, execution continues fresh from there.

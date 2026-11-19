@@ -134,6 +134,15 @@ For each Node in the tree, apply this loop in order:
 4. **Dispatch by body kind** — see the table in §5.
 5. **`timeout`** — wrap each attempt in the declared per-attempt wallclock
    budget (seconds). Exceeding it counts as an attempt failure.
+5a. **Questions for the person running it** — a step's agent may need to ask
+   something only the person knows. In a server run its AskUserQuestion call
+   waits for an answer (the web UI's question dock, or
+   `POST /api/runs/:id/questions/:questionId`) while the rest of the run
+   carries on; here, ask the user yourself with AskUserQuestion and hand the
+   answers to that step. Waiting never counts toward `timeout` or
+   `stallTimeout`. **`questionTimeout`** (seconds) caps the wait: when it
+   passes, the step carries on with its best judgment and says what it
+   assumed. Unset waits as long as it takes.
 6. **`retry`** — on failure, re-attempt up to `retry.times` more times with
    `retry.backoff` (`"fixed"` | `"exponential"`) and `retry.initialMs`.
 7. **`onError` / `continueOnError`** — when all attempts fail:

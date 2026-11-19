@@ -79,6 +79,8 @@ See [`docs/architecture.md`](docs/architecture.md) for the execution model.
 | Deploy | Dockerfile + docker-compose: single-node SQLite by default, `--profile postgres` for N servers + M workers |
 | Crash handling | Orphaned `running` rows (expired lease) flagged `interrupted` on boot, on a re-scan and on a periodic sweep, with their concurrency group released; auto-resume from the checkpoint is opt-in (`SAMMY_AUTO_RESUME=1`, server only, resume-before-drain — the worker marks and drains but never resumes). A terminal write that keeps failing tears the leg down rather than leaving a lease-renewing zombie; a leg that loses its lease persists nothing further |
 | Streaming | SSE — `run-start` → phase events → terminal sentinel; survives reconnect |
+| Questions | A step's agent can ask the person running it (`AskUserQuestion`); only that step waits, answered from the UI's question dock or `POST /api/runs/:id/questions/:questionId`, capped by `questionTimeout` |
+| Sleep-aware timers | `timeout`, `stallTimeout` and group deadlines count awake time: a run on a laptop that sleeps waits it out instead of timing out |
 | Cancel | Aborts the SDK subprocess mid-call; classifies the run as `cancelled` |
 | Editors | Pipeline (linear), Graph (`@xyflow/react`, composites expand inline), Tree, raw JSON |
 | AI-assist | Generate an orchestration from a spec/PRD, **or drop a diagram / PRD / image** and have it extracted |
@@ -136,7 +138,8 @@ See [`docs/architecture.md`](docs/architecture.md) for the execution model.
   feeds recorded leaf outputs back and diffs the control flow; it does not
   re-run agents or prove the same outputs would recur.
 - **Mobile** — the iOS/Android RN projects exist but aren't a maintained
-  surface. Web is the target.
+  surface. Web is the target. The native JS bundle doesn't build at present:
+  the app imports the Node-only Claude Agent SDK.
 
 ## Documentation
 
@@ -270,6 +273,8 @@ An early release — these are known, and on the list:
   run's agents, anything they spawned, and anything still running inside the
   run's worktree; a process an agent detaches somewhere else can survive.
 - **`deniedCommands` matches by substring.** Keep patterns specific.
+- **An agent's open question lives in the server process.** A restart ends
+  the waiting agent, and the run is reported `interrupted`.
 - **Not yet on npm** — install from source as above.
 
 ## Cross-platform (macOS / Linux / Windows)
