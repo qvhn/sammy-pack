@@ -2,7 +2,7 @@
   "name": "sammy-pack-app",
   "version": "0.1.0",
   "private": true,
-  "description": "sammy-pack \u2014 declarative JSON agent orchestration with durable, resumable execution: visual editors, triggers, evals, A2A interop, CLI\u2194web parity.",
+  "description": "sammy-pack — declarative JSON agent orchestration with durable, resumable execution: visual editors, triggers, evals, A2A interop, CLI↔web parity.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -46,7 +46,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.23.1",
     "@xyflow/react": "^12.12.1",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.2.0",
     "connect": "^3.7.0",
     "node-cron": "^4.6.0",
     "pako": "^2.1.0",
