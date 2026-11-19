@@ -40,7 +40,7 @@
     "directory": "app/packages/source-sqs"
   },
   "dependencies": {
-    "@aws-sdk/client-sqs": "^3.600.0"
+    "@aws-sdk/client-sqs": "^3.1169.0"
   },
   "peerDependencies": {
     "@sammy-pack/sdk": ">=0.1.0-alpha.0"

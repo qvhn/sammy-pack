@@ -2,8 +2,11 @@
 #
 # The Claude Agent SDK ships almost daily and carries the Claude Code runtime
 # every run uses, so it gets its own weekly PR (with the MCP SDK and the
-# Anthropic client it pairs with). Everything else is batched into one weekly
-# PR for minor/patch bumps; majors arrive one per PR so each can be read.
+# Anthropic client it pairs with). React Native moves as one release train —
+# react-native, its @react-native/* tooling, the CLI and the React version it
+# pins — and a 0.x "minor" there breaks types, so it gets its own PR too.
+# Everything else is batched into one weekly PR for minor/patch bumps; majors
+# arrive one per PR so each can be read.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -19,11 +22,38 @@ updates:
         patterns:
           - '@anthropic-ai/*'
           - '@modelcontextprotocol/*'
+      react-native:
+        patterns:
+          - 'react-native'
+          - '@react-native/*'
+          - '@react-native-community/*'
+          - 'react'
+          - 'react-dom'
+          - 'react-test-renderer'
+          - '@types/react'
+          - '@types/react-dom'
+          - '@types/react-test-renderer'
       minor-and-patch:
         update-types: [minor, patch]
         exclude-patterns:
           - '@anthropic-ai/*'
           - '@modelcontextprotocol/*'
+          - 'react-native'
+          - '@react-native/*'
+          - '@react-native-community/*'
+          - 'react'
+          - 'react-dom'
+          - 'react-test-renderer'
+          - '@types/react'
+          - '@types/react-dom'
+          - '@types/react-test-renderer'
+    ignore:
+      # React Native's template pins its CLI and Babel 7. Take a major of
+      # either by hand, when a React Native release's template adopts it.
+      - dependency-name: '@react-native-community/cli*'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@babel/*'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /

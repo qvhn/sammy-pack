@@ -1,4 +1,4 @@
-import { AppRegistry } from 'react-native';
+import { AppRegistry, type RootTag } from 'react-native';
 import App from '../App';
 import { installApiAuth } from './api-auth';
 
@@ -10,5 +10,8 @@ installApiAuth();
 
 AppRegistry.registerComponent('SammyPack', () => App);
 AppRegistry.runApplication('SammyPack', {
-  rootTag: document.getElementById('root'),
+  // react-native-web mounts into a DOM element; React Native's own types
+  // only know the native numeric root tag.
+  initialProps: {},
+  rootTag: document.getElementById('root') as unknown as RootTag,
 });
