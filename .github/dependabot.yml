@@ -1,3 +1,9 @@
+# PAUSED: `open-pull-requests-limit: 0` on each entry stops Dependabot opening
+# version-update PRs. Updates are taken by hand, on a branch, and tested
+# (/sammy-pack-setup step 5) before they merge. To resume, set the limits back
+# (npm: 5, github-actions: the default) — the groups and ignores below are
+# ready.
+#
 # Keeps dependencies current through PRs that run the full CI.
 #
 # The Claude Agent SDK ships almost daily and carries the Claude Code runtime
@@ -14,7 +20,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0 # paused — see the top of this file
     commit-message:
       prefix: deps
     groups:
@@ -59,5 +65,6 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 0 # paused — see the top of this file
     commit-message:
       prefix: ci
