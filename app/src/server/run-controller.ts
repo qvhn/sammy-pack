@@ -24,6 +24,7 @@
  */
 
 import { decodeStepRecord } from '../llm/harness';
+import { onWake } from '../llm/awake-clock';
 import { randomUUID } from 'node:crypto';
 import { RunPauseRequested, type PendingWaitSpec } from '../llm/executor';
 import { deriveWaitState, type WaitSeed } from './wait-resolution';
@@ -95,6 +96,47 @@ type EventSource = (
 ) => AsyncIterable<StoredEvent>;
 
 type SendFn = (event: StoredEvent) => void;
+
+/** Pass a run's events through, adding a `machine-slept` note when the
+ *  machine wakes from sleep mid-run. The run itself just waited — its
+ *  timeouts count awake time (see awake-clock.ts) — and the note says why the
+ *  log has a gap. Folded into the one event stream so it's persisted in
+ *  order like any other event. */
+export async function* withWakeNotes(source: AsyncIterable<StoredEvent>): AsyncIterable<StoredEvent> {
+  const woke: number[] = [];
+  let ring: (() => void) | null = null;
+  const off = onWake(ms => {
+    woke.push(ms);
+    ring?.();
+  });
+  const it = source[Symbol.asyncIterator]();
+  let next: Promise<IteratorResult<StoredEvent>> | null = null;
+  let done = false;
+  try {
+    while (true) {
+      next ??= it.next();
+      const wake = new Promise<'wake'>(resolve => {
+        ring = () => resolve('wake');
+        if (woke.length > 0) resolve('wake');
+      });
+      const result = await Promise.race([next, wake]);
+      ring = null;
+      while (woke.length > 0) {
+        yield { type: 'machine-slept', sleptMs: Math.round(woke.shift()!), ts: Date.now() };
+      }
+      if (result === 'wake') continue;
+      next = null;
+      if (result.done) {
+        done = true;
+        return;
+      }
+      yield result.value;
+    }
+  } finally {
+    off();
+    if (!done) await it.return?.(undefined);
+  }
+}
 
 type ActiveRun = {
   id: string;
@@ -426,7 +468,7 @@ async function runInBackground(
     if (ctrl.abortController.signal.aborted) {
       throw new Error(`run ${id} was cancelled before its executor started`);
     }
-    for await (const event of buildEventSource(ctrl.abortController.signal, id)) {
+    for await (const event of withWakeNotes(buildEventSource(ctrl.abortController.signal, id))) {
       // Once a peer owns this run, nothing further from this leg is
       // persisted. The abort above makes the executor unwind, and that unwind
       // YIELDS — a leaf's phase-error, then the `run-cancelled` sentinel —

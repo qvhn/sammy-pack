@@ -205,7 +205,11 @@ distinction.
 4. **`retry: { times, backoff, initialMs }`** — re-attempt the *same* node on
    failure. For transient errors. Each attempt gets its own `timeout`.
 5. **`timeout`** (seconds) — per-attempt wallclock cap → `TimeoutError`, which
-   then flows through `retry` / `onError` like any other failure.
+   then flows through `retry` / `onError` like any other failure. It counts
+   only time the machine is awake, as do `stallTimeout` and a parallel or map
+   group's deadline. A laptop that sleeps mid-run wakes up to the same step
+   still running, not timed out, and the run log notes the sleep
+   (`machine-slept`).
 6. **`onError`** — recovery branch, runs only after retries are exhausted. It
    sees `${error.message}`, and *its* output replaces the failed node's output.
 7. **`as`** — store the (post-success or post-recovery) output in state.
