@@ -231,8 +231,9 @@ For each Node in the tree, apply this loop in order:
    through `retry` / `onError` like any other.
 5a. **Questions for the person running it** — a step's agent may need to ask
    something only the person knows. In a server run its AskUserQuestion call
-   waits for an answer (shown in the UI as a question card) while the rest of
-   the run carries on; here, ask the user yourself with AskUserQuestion and
+   waits for an answer (the web UI's question dock, bottom right, or
+   `POST /api/runs/:id/questions/:questionId`) while the rest of the run
+   carries on; here, ask the user yourself with AskUserQuestion and
    hand the answers to that step. Waiting never counts toward `timeout` or
    `stallTimeout`. **`questionTimeout`** (seconds) caps the wait: when it
    passes, the step carries on with its best judgment and says what it

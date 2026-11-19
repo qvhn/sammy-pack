@@ -38,7 +38,9 @@ type Node = {
   as?:      string;        // name this node's output: later nodes can read ${name}
   when?:    string;        // skip node when the interpolated predicate is falsy
   onError?: Node;          // recovery branch (with ${error.message}) if retries exhausted
-  timeout?: number;        // per-attempt wallclock cap in seconds
+  timeout?: number;        // per-attempt wallclock cap in seconds (awake time)
+  stallTimeout?: number;   // abort after this many seconds with no progress event
+  questionTimeout?: number;// cap on waiting for an answer to the agent's question
   retry?:   RetryPolicy;   // { times, backoff?: "fixed"|"exponential", initialMs? }
   budget?:  Budget;        // { maxTokens?, maxCostUsd? } circuit breaker for this subtree
   tools?:   string[];      // declared connectors this leaf agent needs (validated at run start)
@@ -342,7 +344,25 @@ Skip the node when the interpolated predicate is falsy (`""`, `"false"`, `"0"`, 
 { "name": "fetch", "agent": "agents/fetcher.md", "timeout": 30 }
 ```
 
-If the agent's stream doesn't finish in `timeout` seconds, fail with `TimeoutError`. Timeouts compose with `retry` (each attempt gets its own deadline) and `onError`.
+If the agent's stream doesn't finish in `timeout` seconds, fail with `TimeoutError`. Timeouts compose with `retry` (each attempt gets its own deadline) and `onError`. Unset, a node still gets a generous hard cap (~1800s, `SAMMY_DEFAULT_NODE_TIMEOUT_SEC`).
+
+**Timers count awake time.** `timeout`, `stallTimeout` and a parallel or map group's deadline leave out time the machine spent asleep: a laptop that sleeps mid-run wakes to the same step still running, and the run log notes the gap (`machine-slept`). Time spent waiting on a person's answer (see `questionTimeout`) doesn't count either. Durable `wait` timers are the exception — they keep wall-clock time, so an `until` timestamp means that moment, and a timer that came due during a sleep fires on wake.
+
+### `stallTimeout` — no-progress watchdog
+
+```jsonc
+{ "name": "build", "agent": "agents/dev.md", "timeout": 3600, "stallTimeout": 900 }
+```
+
+Fail with a `StallError` when the node emits **no event** for `stallTimeout` seconds, however far it is from its `timeout`. Any event resets it, and agent steps emit a heartbeat while they think, so a quiet stream means a wedged step. Default ~420s (`SAMMY_DEFAULT_STALL_TIMEOUT_SEC`, or `defaults.stallTimeout` at the root); raise it for a step that legitimately works in silence. Flows through `retry` / `onError`, or through `onStall` when declared.
+
+### `questionTimeout` — how long to wait for an answer
+
+```jsonc
+{ "name": "plan", "agent": "agents/planner.md", "questionTimeout": 600 }
+```
+
+In a server run, a step's agent can ask the person running it a question (its `AskUserQuestion` tool). Only that step waits: parallel branches and other runs carry on, and the step lends its agent slot to others meanwhile. The question appears in the web UI's question dock (bottom right, on every page) and at `GET /api/questions`; answer with `POST /api/runs/{id}/questions/{questionId}`. When `questionTimeout` passes, the agent carries on with its best judgment. Unset, it waits as long as it takes. In `execution: "harness"`, the step in progress decides. Questions live in the server process: a restart ends the waiting agent, and the run is reported `interrupted` like any other restart.
 
 ### `retry` — auto-retry on failure
 
