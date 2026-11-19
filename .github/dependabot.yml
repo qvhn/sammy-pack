@@ -1,0 +1,33 @@
+# Keeps dependencies current through PRs that run the full CI.
+#
+# The Claude Agent SDK ships almost daily and carries the Claude Code runtime
+# every run uses, so it gets its own weekly PR (with the MCP SDK and the
+# Anthropic client it pairs with). Everything else is batched into one weekly
+# PR for minor/patch bumps; majors arrive one per PR so each can be read.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /app # the workspace root: covers app/packages/* through its lockfile
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      claude:
+        patterns:
+          - '@anthropic-ai/*'
+          - '@modelcontextprotocol/*'
+      minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns:
+          - '@anthropic-ai/*'
+          - '@modelcontextprotocol/*'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci

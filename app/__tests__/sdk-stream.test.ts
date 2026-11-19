@@ -195,6 +195,7 @@ describe('streamSdk stamps its usage on every error it throws', () => {
       decision = await p.options!.canUseTool!('Bash', {}, {
         signal: new AbortController().signal,
         toolUseID: 'tu-1',
+        requestId: 'req-1',
       });
       return [turn(10, 5), result()];
     });
@@ -279,6 +280,7 @@ describe('an agent asking the person running it a question', () => {
       decision = await p.options!.canUseTool!('AskUserQuestion', asked, {
         signal: new AbortController().signal,
         toolUseID: 'tu-q',
+        requestId: 'req-q',
       });
       return [turn(10, 5), result()];
     });
@@ -316,6 +318,7 @@ describe('an agent asking the person running it a question', () => {
       decision = await p.options!.canUseTool!('AskUserQuestion', asked, {
         signal: new AbortController().signal,
         toolUseID: 'tu-q',
+        requestId: 'req-q',
       });
       return [result()];
     });
@@ -330,6 +333,7 @@ describe('an agent asking the person running it a question', () => {
       decision = await p.options!.canUseTool!('Write', {}, {
         signal: new AbortController().signal,
         toolUseID: 'tu-w',
+        requestId: 'req-w',
       });
       return [result()];
     });
@@ -345,6 +349,7 @@ describe('an agent asking the person running it a question', () => {
       decision = await p.options!.canUseTool!('Bash', input, {
         signal: new AbortController().signal,
         toolUseID: 'tu-b',
+        requestId: 'req-b',
       });
       return [result()];
     });
