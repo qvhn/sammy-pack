@@ -74,10 +74,10 @@ npm outdated @anthropic-ai/claude-agent-sdk @modelcontextprotocol/sdk zod
 ```
 
 Report the installed and latest versions. The Agent SDK ships almost daily,
-and it carries the Claude Code runtime every run uses. The repo's Dependabot
-config (`.github/dependabot.yml`) opens a grouped PR for these every Monday,
-so normally the fix is to merge that PR and pull. Don't bump versions here
-unless the user asks. If they do, work on a branch: `npm install
+and it carries the Claude Code runtime every run uses. Updates are taken by
+hand (Dependabot is paused in `.github/dependabot.yml`), so being behind is
+expected until someone does that. Don't bump versions here unless the user
+asks. If they do, work on a branch: `npm install
 @anthropic-ai/claude-agent-sdk@latest -w . -w packages/cli`, then run step 5
 in full before committing.
 
