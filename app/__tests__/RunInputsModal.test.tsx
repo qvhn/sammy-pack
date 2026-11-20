@@ -206,3 +206,93 @@ describe('what the dialog says before and after ▶ Run', () => {
     expect(text(renderWith(orch, null))).not.toMatch(/login mode/);
   });
 });
+
+describe('the repo a pipeline works in', () => {
+  const repoOrch = {
+    name: 'ship',
+    inputs: [
+      { name: 'ticket', kind: 'text', required: true },
+      { name: 'repo', kind: 'text', required: true },
+    ],
+    worktrees: [{ name: 'repo', repo: '${repo}' }],
+    phases: [],
+  } as unknown as Node;
+
+  const store = new Map<string, string>();
+  const g = globalThis as { localStorage?: unknown };
+  let saved: unknown;
+  beforeEach(() => {
+    store.clear();
+    saved = g.localStorage;
+    g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
+  });
+  afterEach(() => {
+    g.localStorage = saved;
+  });
+
+  const open = (o: Node = repoOrch) => {
+    const onRun = jest.fn();
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      tree = ReactTestRenderer.create(<RunInputsModal orchestration={o} onClose={jest.fn()} onRun={onRun} />);
+    });
+    return { tree, onRun };
+  };
+  const press = (tree: ReactTestRenderer.ReactTestRenderer, label: string) =>
+    ReactTestRenderer.act(() => {
+      tree.root.find(n => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function').props.onPress();
+    });
+  const runWith = async (tree: ReactTestRenderer.ReactTestRenderer, ticket: string, repo?: string) => {
+    const fields = tree.root.findAllByType(TextInput);
+    ReactTestRenderer.act(() => fields[0].props.onChangeText(ticket));
+    if (repo !== undefined) ReactTestRenderer.act(() => fields[1].props.onChangeText(repo));
+    await ReactTestRenderer.act(async () => runButton(tree).props.onPress());
+  };
+
+  test('the first run asks for it; the next run opens with it filled in, as a chip', async () => {
+    const first = open();
+    expect(first.tree.root.findAllByType(TextInput)).toHaveLength(3); // ticket, repo, instructions
+    await runWith(first.tree, 'T-1', '/work/app');
+    expect(first.onRun).toHaveBeenCalledWith({ ticket: { value: 'T-1' }, repo: { value: '/work/app' } }, '', {});
+
+    const next = open();
+    // Only the ticket and the instructions are fields; the repo is a chip.
+    expect(next.tree.root.findAllByType(TextInput)).toHaveLength(2);
+    expect(text(next.tree)).toContain('/work/app');
+    await runWith(next.tree, 'T-2');
+    expect(next.onRun).toHaveBeenCalledWith({ ticket: { value: 'T-2' }, repo: { value: '/work/app' } }, '', {});
+  });
+
+  test('Change offers the field and the recent repos; picking one goes back to the chip', async () => {
+    await runWith(open().tree, 'T-1', '/work/api');
+    await runWith(open().tree, 'T-2', undefined); // still /work/api
+    const other = open();
+    press(other.tree, 'Change the repo');
+    ReactTestRenderer.act(() => other.tree.root.findAllByType(TextInput)[1].props.onChangeText('/work/web'));
+    await runWith(other.tree, 'T-3');
+    expect(other.onRun).toHaveBeenLastCalledWith({ ticket: { value: 'T-3' }, repo: { value: '/work/web' } }, '', {});
+
+    const { tree, onRun } = open();
+    expect(text(tree)).toContain('/work/web');
+    press(tree, 'Change the repo');
+    // The recent list leaves out the repo already in the field.
+    expect(tree.root.findAll(n => n.props.accessibilityLabel === 'Use /work/web' && typeof n.props.onPress === 'function')).toHaveLength(0);
+    press(tree, 'Use /work/api');
+    expect(tree.root.findAllByType(TextInput)).toHaveLength(2);
+    await runWith(tree, 'T-4');
+    expect(onRun).toHaveBeenLastCalledWith({ ticket: { value: 'T-4' }, repo: { value: '/work/api' } }, '', {});
+  });
+
+  test('each pipeline remembers its own repo', async () => {
+    await runWith(open().tree, 'T-1', '/work/app');
+    const other = open({ ...repoOrch, name: 'review' } as Node);
+    expect(other.tree.root.findAllByType(TextInput)).toHaveLength(3);
+  });
+
+  test('without storage the dialog still asks and runs', async () => {
+    g.localStorage = undefined;
+    const { tree, onRun } = open();
+    await runWith(tree, 'T-1', '/work/app');
+    expect(onRun).toHaveBeenCalledWith({ ticket: { value: 'T-1' }, repo: { value: '/work/app' } }, '', {});
+  });
+});
