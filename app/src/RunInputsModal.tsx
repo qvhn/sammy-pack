@@ -8,6 +8,7 @@ import { getAllowAgentTools } from './store/apiKey';
 import { FOLLOW_HELP, getHarnessSettings } from './store/harness';
 import { followLabel, HARNESS_FOLLOWS } from './llm/harness';
 import type { RunModeOptions } from './store/runs';
+import { lastRepo, recentRepos, rememberRepo } from './store/recentRepos';
 
 const FOLLOW_RANK: Record<HarnessFollow, number> = { advisory: 0, loose: 1, strict: 2 };
 
@@ -96,6 +97,24 @@ export function runInputPlaceholder(d: {
   }
 }
 
+/** Inputs a `worktrees` entry reads as its repo (`${name}` / `${input.name}`). */
+function repoInputNames(orchestration: Node): Set<string> {
+  return new Set(
+    (orchestration.inputs ?? [])
+      .filter(d =>
+        (orchestration.worktrees ?? []).some(
+          w => w.repo.includes(`\${${d.name}}`) || w.repo.includes(`\${input.${d.name}}`),
+        ),
+      )
+      .map(d => d.name),
+  );
+}
+
+/** A folder's last path segment, for the repo chip. */
+function folderName(path: string): string {
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+}
+
 /**
  * The pre-run input modal. ALWAYS shown when a run is launched (the editor's
  * ▶ Run and the Runs page replay both open it), even when the orchestration
@@ -152,6 +171,12 @@ export function RunInputsModal({
   // to run (or left a required field empty) — not shouted on open.
   const [attempted, setAttempted] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  // Repo inputs open as a chip holding the last repo this pipeline used;
+  // Change swaps the chip for the field, Browse… and the recent repos.
+  const [editingRepo, setEditingRepo] = useState<Record<string, boolean>>({});
+  // Set once the values above are seeded for this orchestration, so the
+  // first-field focus waits for the seeded layout.
+  const [seededFor, setSeededFor] = useState<Node | null>(null);
   // Pipeline or harness, and the harness's strictness. `follow` stays null
   // until the user picks one, so an untouched dialog leaves the decision to
   // the orchestration / Settings (and the run records that as its source).
@@ -163,7 +188,16 @@ export function RunInputsModal({
   const firstFieldRef = useRef<TextInputInstance | null>(null);
   const instructionsRef = useRef<TextInputInstance | null>(null);
   useEffect(() => {
-    setValues({});
+    const seeded: Record<string, string> = {};
+    if (orchestration) {
+      for (const name of repoInputNames(orchestration)) {
+        const last = lastRepo(orchestration.name, name);
+        if (last) seeded[name] = last;
+      }
+    }
+    setValues(seeded);
+    setEditingRepo({});
+    setSeededFor(orchestration);
     setFiles({});
     setCloneOffer(null);
     setChecking(false);
@@ -187,9 +221,9 @@ export function RunInputsModal({
   }, [orchestration]);
 
   useEffect(() => {
-    if (!orchestration) return;
+    if (!seededFor) return;
     (firstFieldRef.current ?? instructionsRef.current)?.focus?.();
-  }, [orchestration]);
+  }, [seededFor]);
 
   // Escape closes the dialog (web). Not while a clone is in flight — that
   // request would keep running behind a closed dialog — and not while the
@@ -221,21 +255,13 @@ export function RunInputsModal({
   const showMissing =
     missingRequired &&
     (attempted || decls.some(d => d.required && touched[d.name] && !provided(d)));
-  const firstTextName = decls.find(d => d.kind !== 'file')?.name;
-
-
-  // Inputs a `worktrees` entry reads as its repo (`${name}` / `${input.name}`)
-  // need a LOCAL path; a pasted web address is swapped for this machine's
-  // clone of it, or the dialog offers to make one.
-  const repoInputs = new Set(
-    decls
-      .filter(d =>
-        (orchestration.worktrees ?? []).some(
-          w => w.repo.includes(`\${${d.name}}`) || w.repo.includes(`\${input.${d.name}}`),
-        ),
-      )
-      .map(d => d.name),
-  );
+  // Repo inputs need a LOCAL path; a pasted web address is swapped for this
+  // machine's clone of it, or the dialog offers to make one.
+  const repoInputs = repoInputNames(orchestration);
+  // A repo input showing its chip has no field to type in.
+  const showsChip = (name: string) =>
+    repoInputs.has(name) && !editingRepo[name] && !!(values[name] ?? '').trim();
+  const firstTextName = decls.find(d => d.kind !== 'file' && !showsChip(d.name))?.name;
   const isRepoUrl = (v: string) =>
     /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^[\w.-]+@[\w.-]+:/.test(v);
 
@@ -276,6 +302,9 @@ export function RunInputsModal({
       }
     }
     setValues(v => ({ ...v, ...overrides }));
+    for (const name of repoInputs) {
+      rememberRepo(orchestration.name, name, overrides[name] ?? values[name] ?? '');
+    }
     // The instructions box maps to the run's initial input. Trim to keep an
     // empty box equivalent to "no initial input" (same as a plain ▶ Run).
     onRun(collect(overrides), instructions.trim(), {
@@ -332,30 +361,75 @@ export function RunInputsModal({
                   file={files[d.name]}
                   onFile={f => setFiles(s => ({ ...s, [d.name]: f }))}
                 />
-              ) : (
+              ) : showsChip(d.name) ? (
                 <View style={styles.inputRow}>
-                  <TextInput
-                    ref={d.name === firstTextName ? firstFieldRef : undefined}
-                    value={values[d.name] ?? ''}
-                    onChangeText={t => setValues(s => ({ ...s, [d.name]: t }))}
-                    onBlur={() => setTouched(s => ({ ...s, [d.name]: true }))}
-                    // Enter in a single-line field runs (when the form is valid).
-                    onSubmitEditing={trySubmit}
-                    returnKeyType="go"
-                    placeholder={runInputPlaceholder(d)}
-                    style={[styles.input, styles.inputGrow]}
-                    autoCapitalize="none"
-                  />
-                  {repoInputs.has(d.name) ? (
-                    <Pressable
-                      onPress={() => setBrowsing(d.name)}
-                      style={[styles.button, styles.secondaryButton]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Browse for the ${d.name} folder`}>
-                      <Text style={styles.secondaryButtonText}>Browse…</Text>
-                    </Pressable>
-                  ) : null}
+                  <View style={styles.repoChip} accessibilityLabel={`${d.name}: ${values[d.name]}`}>
+                    <Text style={styles.repoChipName}>{folderName(values[d.name])}</Text>
+                    <Text style={styles.repoChipPath} numberOfLines={1}>
+                      {values[d.name]}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => setEditingRepo(s => ({ ...s, [d.name]: true }))}
+                    style={[styles.button, styles.secondaryButton]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Change the ${d.name}`}>
+                    <Text style={styles.secondaryButtonText}>Change</Text>
+                  </Pressable>
                 </View>
+              ) : (
+                <>
+                  <View style={styles.inputRow}>
+                    <TextInput
+                      ref={d.name === firstTextName ? firstFieldRef : undefined}
+                      value={values[d.name] ?? ''}
+                      onChangeText={t => setValues(s => ({ ...s, [d.name]: t }))}
+                      onBlur={() => setTouched(s => ({ ...s, [d.name]: true }))}
+                      // Enter in a single-line field runs (when the form is valid).
+                      onSubmitEditing={trySubmit}
+                      returnKeyType="go"
+                      placeholder={runInputPlaceholder(d)}
+                      style={[styles.input, styles.inputGrow]}
+                      autoCapitalize="none"
+                    />
+                    {repoInputs.has(d.name) ? (
+                      <Pressable
+                        onPress={() => setBrowsing(d.name)}
+                        style={[styles.button, styles.secondaryButton]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Browse for the ${d.name} folder`}>
+                        <Text style={styles.secondaryButtonText}>Browse…</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {repoInputs.has(d.name)
+                    ? (() => {
+                        const recent = recentRepos().filter(r => r !== (values[d.name] ?? '').trim());
+                        return recent.length > 0 ? (
+                          <View style={styles.recentRepos}>
+                            <Text style={styles.recentLabel}>Recent</Text>
+                            {recent.map(r => (
+                              <Pressable
+                                key={r}
+                                onPress={() => {
+                                  setValues(s => ({ ...s, [d.name]: r }));
+                                  setTouched(s => ({ ...s, [d.name]: true }));
+                                  setEditingRepo(s => ({ ...s, [d.name]: false }));
+                                }}
+                                style={styles.recentRepo}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Use ${r}`}>
+                                <Text style={styles.repoChipName}>{folderName(r)}</Text>
+                                <Text style={styles.repoChipPath} numberOfLines={1}>
+                                  {r}
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        ) : null;
+                      })()
+                    : null}
+                </>
               )}
             </View>
           ))}
@@ -456,6 +530,7 @@ export function RunInputsModal({
           onPick={dir => {
             setValues(s => ({ ...s, [browsing]: dir }));
             setTouched(s => ({ ...s, [browsing]: true }));
+            setEditingRepo(s => ({ ...s, [browsing]: false }));
             setBrowsing(null);
           }}
         />
@@ -666,6 +741,26 @@ const styles = StyleSheet.create({
   instructionsInput: { minHeight: 80, paddingTop: 8 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   inputGrow: { flex: 1 },
+  repoChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#f9fafb',
+  },
+  repoChipName: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  repoChipPath: { fontSize: 12, color: '#6b7280' },
+  recentRepos: { marginTop: 6, gap: 4 },
+  recentLabel: { fontSize: 11, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase' },
+  recentRepo: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
   dropZone: {
     borderWidth: 1,
     borderStyle: 'dashed',
