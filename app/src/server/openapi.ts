@@ -229,7 +229,9 @@ export function buildOpenApiDoc(): object {
             'The executor lives on the server; the run survives the client ' +
             'disconnecting. Subscribe to progress via ' +
             '`GET /api/runs/{id}/events`. Declared orchestration `inputs` ' +
-            'are resolved before start (missing required input → 400). When ' +
+            'are resolved before start (missing required input → 400); with ' +
+            '`prompt`, they are filled from the prompt, `repo` and ' +
+            '`attachments` first. When ' +
             'the orchestration declares a `concurrency.group` held by an ' +
             'active run, the response is 200 with `id: null` and a ' +
             '`concurrency` outcome instead of a new run id.',
@@ -1974,6 +1976,38 @@ export function buildOpenApiDoc(): object {
                 '`harness.follow` and the workspace default — unless the ' +
                 'orchestration sets `harness.lockFollow`, which only lets a run ' +
                 'make it stricter. Recorded on the run with where it came from.',
+            },
+            prompt: {
+              type: 'boolean',
+              description:
+                'Treat `initialInput` as a prompt in the person’s own words (the ' +
+                'Run dialog): Jira keys and issue / page links in it are fetched ' +
+                'and attached under it, and declared `inputs` the request leaves ' +
+                'out are filled from it — the repo input a worktree reads takes ' +
+                '`repo`, `file` inputs take `attachments`, the first other input ' +
+                'takes the prompt.',
+            },
+            attachments: {
+              type: 'array',
+              description:
+                'Files attached to the prompt. Saved where the agents can open ' +
+                'them and listed, with their text, under the prompt.',
+              items: {
+                type: 'object',
+                properties: {
+                  filename: { type: 'string' },
+                  mediaType: { type: 'string' },
+                  data: { type: 'string', contentEncoding: 'base64' },
+                },
+              },
+            },
+            repo: {
+              type: 'string',
+              description:
+                'The repository the run works in: a local path (`~` allowed) or ' +
+                'its URL (resolved to a clone on this machine). The run gets its ' +
+                'own worktree of it on a new branch; an orchestration that ' +
+                'declares no `worktrees` gets one named `repo`.',
             },
             inputs: {
               type: 'object',

@@ -137,7 +137,13 @@ import {
   type Credential,
   type CredentialsConfig,
 } from './src/server/credentials-store';
-import { resolveInputs, type InputValue } from './src/server/input-resolver';
+import {
+  expandRunPrompt,
+  promptInputs,
+  resolveInputs,
+  type InputValue,
+  type PromptFile,
+} from './src/server/input-resolver';
 import { KIND_REGISTRY } from './src/store/kindRegistry';
 import {
   describeTrigger as describeTriggerKind,
@@ -7853,6 +7859,18 @@ export async function mountSammyApi(
               file?: { filename?: string; mediaType?: string; data?: string };
             }
           >;
+          /** The Run dialog's way in: `initialInput` is a prompt in the
+           *  person's own words. Links and Jira keys in it are fetched before
+           *  the run, and declared `inputs` the request leaves out are filled
+           *  from it (see promptInputs). */
+          prompt?: boolean;
+          /** Files attached to the prompt (base64 `data`). */
+          attachments?: Array<{ filename?: string; mediaType?: string; data?: string }>;
+          /** The repository the run works in: a local path (`~` allowed) or
+           *  its URL. The run gets its own worktree of it — declared
+           *  `worktrees` read it as their repo input; an orchestration that
+           *  declares none gets one named `repo`. */
+          repo?: string;
         };
         try {
           body = JSON.parse(await readBody(req));
@@ -7889,7 +7907,11 @@ export async function mountSammyApi(
                 workspaceDefault: readHarnessSettingsSync(harnessFile).follow ?? undefined,
               })
             : undefined;
-        const ctx =
+        const repo =
+          typeof body.repo === 'string' && body.repo.trim()
+            ? body.repo.trim().replace(/^~(?=$|[\\/])/, os.homedir())
+            : undefined;
+        const ctx0 =
           execution === (loaded.orchestration.execution ?? 'pipeline') && !harnessFollow
             ? loaded
             : {
@@ -7902,6 +7924,22 @@ export async function mountSammyApi(
                     : {}),
                 },
               };
+        // A repo for an orchestration that declares no worktrees: the run
+        // still works in its own worktree of it, never in the checkout —
+        // written into the run's snapshot, so resume, cleanup and
+        // `${worktrees.repo.path}` treat it like a declared one.
+        const declaredWorktrees = ctx0.orchestration.worktrees;
+        const ctx =
+          repo && !(Array.isArray(declaredWorktrees) && declaredWorktrees.length > 0)
+            ? { ...ctx0, orchestration: { ...ctx0.orchestration, worktrees: [{ name: 'repo', repo }] } }
+            : ctx0;
+        const attachments: PromptFile[] = (Array.isArray(body.attachments) ? body.attachments : [])
+          .filter(a => a && typeof a.data === 'string')
+          .map(a => ({
+            filename: a.filename ?? 'upload',
+            mime: a.mediaType ?? '',
+            bytes: Buffer.from(a.data as string, 'base64'),
+          }));
 
         // Server-side budget gate. Pre-flight: refuse the run outright
         // if a daily / monthly spend cap is already reached. Otherwise
@@ -7922,27 +7960,10 @@ export async function mountSammyApi(
         // the run starts, so phases can read them as ${name}. A missing
         // required input or an unresolvable reference refuses the run here
         // with a clear 400 rather than letting it work on nothing.
-        let resolvedInputs: Record<string, string> | undefined;
-        const inputDecls = ctx.orchestration.inputs;
-        if (Array.isArray(inputDecls) && inputDecls.length > 0) {
-          const rawValues = body.inputs ?? {};
-          const values: Record<string, InputValue> = {};
-          for (const [k, v] of Object.entries(rawValues)) {
-            if (v && v.file && typeof v.file.data === 'string') {
-              values[k] = {
-                file: {
-                  filename: v.file.filename ?? 'upload',
-                  mime: v.file.mediaType ?? '',
-                  bytes: Buffer.from(v.file.data, 'base64'),
-                },
-              };
-            } else if (v && typeof v.value === 'string') {
-              values[k] = { value: v.value };
-            }
-          }
-          // Resolver creds from the registry (best-effort): an `atlassian`
-          // entry powers jira/confluence inputs, a `github` entry powers
-          // github inputs. text/url/file need no creds.
+        // Resolver creds from the registry (best-effort): an `atlassian`
+        // entry powers jira/confluence references, a `github` entry github
+        // ones. text/url/file need no creds.
+        const resolverCreds = async () => {
           const rawCreds = readCredentialsByNameRaw(credentialsFile, {
             ownerId,
             orchestrationName: name,
@@ -7978,6 +7999,50 @@ export async function mountSammyApi(
             const token = await ghCliToken();
             if (token) github = { token };
           }
+          return { atlassian, github };
+        };
+        const promptText = typeof body.initialInput === 'string' ? body.initialInput : '';
+        let initialInput = body.initialInput;
+        let resolvedInputs: Record<string, string> | undefined;
+        const inputDecls = ctx.orchestration.inputs;
+        const rawValues: NonNullable<typeof body.inputs> = { ...(body.inputs ?? {}) };
+        // What the prompt fills in a declared-inputs orchestration — so one
+        // written for typed fields runs from the prompt box unchanged.
+        const promptFills = body.prompt
+          ? promptInputs(inputDecls ?? [], ctx.orchestration.worktrees ?? [], rawValues, {
+              text: promptText,
+              repo,
+              files: attachments.length,
+            })
+          : { values: {}, usedText: false, usedFiles: 0 };
+        for (const [k, v] of Object.entries(promptFills.values)) {
+          rawValues[k] =
+            v.file !== undefined
+              ? {
+                  file: {
+                    filename: attachments[v.file].filename,
+                    mediaType: attachments[v.file].mime,
+                    data: attachments[v.file].bytes.toString('base64'),
+                  },
+                }
+              : { value: v.value };
+        }
+        if (Array.isArray(inputDecls) && inputDecls.length > 0) {
+          const values: Record<string, InputValue> = {};
+          for (const [k, v] of Object.entries(rawValues)) {
+            if (v && v.file && typeof v.file.data === 'string') {
+              values[k] = {
+                file: {
+                  filename: v.file.filename ?? 'upload',
+                  mime: v.file.mediaType ?? '',
+                  bytes: Buffer.from(v.file.data, 'base64'),
+                },
+              };
+            } else if (v && typeof v.value === 'string') {
+              values[k] = { value: v.value };
+            }
+          }
+          const { atlassian, github } = await resolverCreds();
           try {
             resolvedInputs = await resolveInputs(inputDecls, values, {
               atlassian,
@@ -7993,6 +8058,28 @@ export async function mountSammyApi(
             );
           }
         }
+        // The prompt's own links and files, when no declared input took them:
+        // fetched / saved now and attached under the person's words.
+        if (body.prompt) {
+          const files = attachments.slice(promptFills.usedFiles);
+          // A prompt that is just one key or link was fetched as the input it
+          // filled; any other prompt's links are fetched here too.
+          const loneReference = promptFills.usedText && /^\S+$/.test(promptText.trim());
+          if (!loneReference || files.length > 0) {
+            const { atlassian, github } = await resolverCreds();
+            try {
+              const context = await expandRunPrompt(loneReference ? '' : promptText, files, {
+                atlassian,
+                github,
+                attachmentsDir: path.join(worktreeRoot(root), '_attachments'),
+                filesDir: path.join(worktreeRoot(root), '_attachments', '_uploads'),
+              });
+              initialInput = loneReference ? `${promptText.trim()}\n\n${context.trim()}` : context;
+            } catch (err) {
+              return sendError(res, 400, `attaching the prompt's context failed: ${(err as Error).message}`);
+            }
+          }
+        }
 
         // Start-gate: honor the orchestration's `concurrency.group` (if any)
         // on the manual-start path exactly as on trigger fires. A skip / queue
@@ -8003,7 +8090,7 @@ export async function mountSammyApi(
           {
             store,
             orchestrationName: name,
-            initialInput: body.initialInput,
+            initialInput,
             orchestrationSnapshot: ctx.orchestration,
             budgetGate,
             ownerId,
@@ -8017,7 +8104,7 @@ export async function mountSammyApi(
               buildExecutorSource(
                 ctx,
                 {
-                  initialInput: body.initialInput,
+                  initialInput,
                   model: body.model,
                   allowAgentTools: body.allowAgentTools,
                   ownerId,
@@ -8031,7 +8118,7 @@ export async function mountSammyApi(
           },
           {
             orchName: name,
-            initialInput: body.initialInput ?? null,
+            initialInput: initialInput ?? null,
             ownerId,
             resolvedInputs: resolvedInputs ?? null,
           },

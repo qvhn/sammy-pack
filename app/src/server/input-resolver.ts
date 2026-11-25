@@ -15,6 +15,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { InputDecl } from '../types';
 import { extractFromUpload } from './file-extractor';
+import { PROMPT_CONTEXT_HEADING } from '../lib/run-prompt';
 
 /** Per-ticket attachment limits: enough for screenshots, logs and design
  *  assets, not a way to pull a whole drive onto the server. */
@@ -458,4 +459,143 @@ async function pruneOldAttachments(dir: string): Promise<void> {
     const st = await fs.stat(full).catch(() => null);
     if (st && st.mtimeMs < cutoff) await fs.rm(full, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+// ── Run prompts ──────────────────────────────────────────────────────────
+// The Run dialog sends one prompt and any attached files, the way a person
+// talks to Claude Code, instead of a typed field per input. What the typed
+// `jira` / `github` / `confluence` fields did before the run — fetch the
+// issue or page so the agents start with it — now happens for the links and
+// keys found in the prompt, and attached files are saved where the agents can
+// open them. Nothing here refuses a run: a prompt is free text, so a reference
+// that cannot be fetched is noted for the agents rather than blocking them.
+
+/** At most this many references are fetched from one prompt. */
+const MAX_PROMPT_REFERENCES = 6;
+/** Extracted text kept per attached file. */
+const MAX_FILE_TEXT = 100_000;
+/** Words shaped like Jira keys that almost never are (`UTF-8`, `ISO-8601`). */
+const NOT_JIRA_PROJECTS = new Set([
+  'UTF', 'ISO', 'SHA', 'RFC', 'CVE', 'MD', 'ES', 'GPT', 'HTTP', 'TLS', 'SSL', 'IPV', 'ECMA', 'WCAG', 'COVID', 'PEP',
+]);
+
+
+export type PromptFile = { filename: string; mime: string; bytes: Buffer };
+
+type Reference = { kind: 'jira' | 'github' | 'confluence'; value: string; bare: boolean };
+
+/** The links and Jira keys in a prompt worth fetching, in order, deduplicated. */
+export function findPromptReferences(text: string, opts: { jiraKeys: boolean }): Reference[] {
+  const refs: Reference[] = [];
+  const seen = new Set<string>();
+  const add = (r: Reference) => {
+    const k = `${r.kind}:${r.value.toLowerCase()}`;
+    if (seen.has(k) || refs.length >= MAX_PROMPT_REFERENCES) return;
+    seen.add(k);
+    refs.push(r);
+  };
+  const urls = [...text.matchAll(/https?:\/\/[^\s<>()"'`]+/gi)].map(m => m[0].replace(/[.,;:!?]+$/, ''));
+  for (const url of urls) {
+    if (/github\.com\/[^/]+\/[^/]+\/(issues|pull)\/\d+/i.test(url)) add({ kind: 'github', value: url, bare: false });
+    else if (/atlassian\.net\/wiki\//i.test(url)) add({ kind: 'confluence', value: url, bare: false });
+    else if (/\/browse\/[A-Za-z][A-Za-z0-9_]*-\d+|selectedIssue=/i.test(url)) add({ kind: 'jira', value: url, bare: false });
+  }
+  if (opts.jiraKeys) {
+    const withoutUrls = text.replace(/https?:\/\/[^\s<>()"'`]+/gi, ' ');
+    for (const m of withoutUrls.matchAll(/\b([A-Z][A-Z0-9_]{1,9})-(\d+)\b/g)) {
+      if (!NOT_JIRA_PROJECTS.has(m[1])) add({ kind: 'jira', value: m[0], bare: true });
+    }
+  }
+  return refs;
+}
+
+/**
+ * The prompt a run starts with: the person's words, then — under
+ * PROMPT_CONTEXT_HEADING — each fetched reference and each attached file
+ * (saved under `filesDir`, its path given so an agent can open it). Returns
+ * the words unchanged when there is nothing to attach.
+ */
+export async function expandRunPrompt(
+  text: string,
+  files: PromptFile[],
+  deps: ResolveDeps & { filesDir?: string } = {},
+): Promise<string> {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const sections: string[] = [];
+  for (const ref of findPromptReferences(text, { jiraKeys: !!deps.atlassian })) {
+    if (ref.kind !== 'github' && !deps.atlassian) {
+      sections.push(`${ref.value}: not fetched — no Atlassian connection is set up (Connections page).`);
+      continue;
+    }
+    try {
+      const decl = { name: 'prompt', kind: ref.kind } as InputDecl;
+      sections.push(await resolveOne(decl, { value: ref.value }, deps, fetchImpl));
+    } catch (err) {
+      // A bare key that is not an issue (a version, a part number) is not
+      // worth a note; a link the person pasted is.
+      if (!ref.bare) sections.push(`${ref.value}: could not be fetched — ${(err as Error).message}`);
+    }
+  }
+  if (files.length > 0) {
+    const dir = deps.filesDir
+      ? path.join(deps.filesDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+      : null;
+    if (dir) await fs.mkdir(dir, { recursive: true });
+    for (const f of files) {
+      const name = path.basename(f.filename || 'upload').replace(/[^\w.@-]+/g, '_') || 'upload';
+      const saved = dir ? path.join(dir, name) : null;
+      if (saved) await fs.writeFile(saved, f.bytes);
+      let body = '';
+      try {
+        const r = await extractFromUpload(f.filename, f.mime, f.bytes);
+        const textBlocks = r.blocks.filter(b => b.type === 'text').map(b => (b as { text: string }).text);
+        body = textBlocks.join('\n\n');
+        if (!body && r.blocks.some(b => b.type === 'image')) body = '(an image — open it with the Read tool to see it)';
+        if (body.length > MAX_FILE_TEXT) body = `${body.slice(0, MAX_FILE_TEXT)}\n… (cut at ${MAX_FILE_TEXT} characters; the full file is at the path above)`;
+      } catch (err) {
+        body = `(its text could not be read: ${(err as Error).message})`;
+      }
+      sections.push([`File: ${f.filename}${saved ? ` (saved at ${saved})` : ''}`, '', body].join('\n'));
+    }
+  }
+  if (sections.length === 0) return text;
+  return [text.trim(), '', PROMPT_CONTEXT_HEADING, '', sections.join('\n\n---\n\n')].join('\n');
+}
+
+/** Whether a declared input is read as a `worktrees` entry's repo. */
+export function feedsWorktree(name: string, worktrees: Array<{ repo: string }>): boolean {
+  return worktrees.some(w => w.repo.includes(`\${${name}}`) || w.repo.includes(`\${input.${name}}`));
+}
+
+/**
+ * The declared inputs a prompt fills when the request leaves them out — so an
+ * orchestration written for typed fields runs from the prompt box unchanged:
+ * an input a worktree reads as its repo takes the run's repo; `file` inputs
+ * take the attached files in order; the first other input (a required one
+ * first) takes the prompt's text, resolved by its kind as a typed field's
+ * value would be (a Jira key is fetched, a sentence is a described ticket).
+ * `file` in a returned value is an index into the attachments.
+ */
+export function promptInputs(
+  decls: InputDecl[],
+  worktrees: Array<{ repo: string }>,
+  given: Record<string, unknown>,
+  prompt: { text: string; repo?: string; files: number },
+): { values: Record<string, { value?: string; file?: number }>; usedText: boolean; usedFiles: number } {
+  const values: Record<string, { value?: string; file?: number }> = {};
+  let usedFiles = 0;
+  const open = decls.filter(d => given[d.name] === undefined);
+  for (const d of open) {
+    if (feedsWorktree(d.name, worktrees)) {
+      if (prompt.repo) values[d.name] = { value: prompt.repo };
+    } else if (d.kind === 'file' && usedFiles < prompt.files) {
+      values[d.name] = { file: usedFiles++ };
+    }
+  }
+  const textTaker =
+    open.find(d => d.required && d.kind !== 'file' && !feedsWorktree(d.name, worktrees)) ??
+    open.find(d => d.kind !== 'file' && !feedsWorktree(d.name, worktrees));
+  const usedText = !!textTaker && !!prompt.text.trim();
+  if (usedText) values[textTaker!.name] = { value: prompt.text.trim() };
+  return { values, usedText, usedFiles };
 }

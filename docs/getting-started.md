@@ -67,6 +67,28 @@ Pipelines → `refinement-loop` → Run. Each phase shows its cost, duration, an
 model in the run view. Other good starters: `fanout-summarize` (parallel map),
 `decision-tree` (routing), `multi-agent-dialog` (conversation).
 
+## The Run dialog
+
+▶ Run opens one prompt box, like Claude Code — no form:
+
+- **Prompt** — say what to work on, or paste a ticket key or link. Enter runs;
+  Shift+Enter is a new line. Jira keys and links to Jira issues, GitHub issues
+  or pull requests and Confluence pages are fetched before the run and
+  attached under your words, so the agents start with them.
+- **Files** — 📎 Attach, drop them on the dialog, or paste them. They are saved
+  where the agents can open them, with their text attached under the prompt.
+- **Repo** — where the run works. It opens on the last repo this pipeline used,
+  follows one your prompt names (`~/git/web`, a repository URL, or the repo of
+  a GitHub issue you link), and **Change** picks another. The run works in its
+  own git worktree on a new branch, never in your checkout — so several runs of
+  the same pipeline, on the same repo or different ones, don't touch each
+  other. Without a repo the run works in an empty folder of its own.
+- **How to run** — Pipeline or Harness ([`harness.md`](harness.md)).
+
+A pipeline that declares typed `inputs` runs from the prompt unchanged: your
+prompt fills its first required input, the repo the input its worktree reads,
+attached files its `file` inputs. Triggers and the API still set inputs by name.
+
 ## The Runs page
 
 Every run — live or historical — lives on the **Runs** page:
