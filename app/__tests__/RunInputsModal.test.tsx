@@ -36,9 +36,13 @@ beforeEach(() => {
   savedStorage = g.localStorage;
   g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
 });
+// Unmounted after each test, so a settings request that resolves later
+// does not re-render a dialog after the test environment is gone.
+const mounted: ReactTestRenderer.ReactTestRenderer[] = [];
 afterEach(() => {
   g.localStorage = savedStorage;
   mockAllowAgentTools = false;
+  ReactTestRenderer.act(() => mounted.splice(0).forEach(t => t.unmount()));
 });
 
 function open(o: Node, props: { defaultInstructions?: string; error?: string | null } = {}) {
@@ -50,6 +54,7 @@ function open(o: Node, props: { defaultInstructions?: string; error?: string | n
       <RunInputsModal orchestration={o} onClose={onClose} onRun={onRun} {...props} />,
     );
   });
+  mounted.push(tree);
   return { tree, onRun, onClose };
 }
 
