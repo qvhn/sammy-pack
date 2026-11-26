@@ -20,7 +20,9 @@
 import { checkDeniedCommand } from './sandbox-policy';
 import { ensureWorktrees } from './worktrees';
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import {
   readCredentialsByNameRaw,
@@ -533,6 +535,15 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
             workspaceDefault: readHarnessSettingsSync(harnessSettingsFile(root)).follow ?? undefined,
           }));
 
+    // A server-owned run without worktrees gets its own empty folder for its
+    // agents, the same one again on resume (keyed by run id). It sits in the
+    // OS temp folder, which the OS clears; the agents' session transcripts
+    // name it, so "Open in terminal" can still resume there.
+    const hasWorktrees = Array.isArray(ctx.orchestration.worktrees) && ctx.orchestration.worktrees.length > 0;
+    const scratchCwd =
+      opts.runId && !hasWorktrees ? path.join(os.tmpdir(), 'sammy-pack-runs', opts.runId) : undefined;
+    if (scratchCwd) mkdirSync(scratchCwd, { recursive: true });
+
     const run = (
       worktrees?: Awaited<ReturnType<typeof ensureWorktrees>>,
     ): AsyncIterable<RunEvent> => runOrchestration({
@@ -551,6 +562,9 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
       // A harness agent with no worktree works in the workspace root, where
       // its project skills live and where `claude --resume` finds the session.
       harnessCwd: root,
+      // Any other agent with no worktree works in the run's own empty folder
+      // (made below, only when the run has no worktrees), not the server's.
+      ...(scratchCwd ? { scratchCwd } : {}),
       // The run's handle for a person taking it over in a terminal.
       ...(harnessFollow && opts.runId ? { harnessControl: harnessControlFor(opts.runId) } : {}),
       skillExists: (name: string) =>
@@ -621,7 +635,18 @@ export function createRunRunner(opts: { root: string; loadArtifact?: ArtifactLoa
     // active injected secret literals from event text fields, so a secret
     // an agent echoes into stdout never reaches the durable store, the
     // /runs UI, or any API response. Pure pass-through otherwise.
-    return scrubEventStream(source, injectedSecrets);
+    // An empty run folder is not kept past the leg (a resumed leg makes it
+    // again); one an agent left files in stays, for the steps after a pause.
+    const tidied: AsyncIterable<RunEvent> = scratchCwd
+      ? (async function* () {
+          try {
+            yield* source;
+          } finally {
+            await fs.rmdir(scratchCwd).catch(() => {});
+          }
+        })()
+      : source;
+    return scrubEventStream(tidied, injectedSecrets);
   }
 
   return {

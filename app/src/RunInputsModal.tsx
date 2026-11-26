@@ -115,26 +115,50 @@ function folderName(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
 }
 
+const isRepoUrl = (v: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^[\w.-]+@[\w.-]+:/.test(v);
+
 /**
- * The pre-run input modal. ALWAYS shown when a run is launched (the editor's
- * ▶ Run and the Runs page replay both open it), even when the orchestration
- * declares no `inputs`.
+ * The repository a prompt names, if any: a local folder (`~/…`, or an
+ * absolute path under a home or project folder), a repository's web address,
+ * or — failing those — the repository of a GitHub issue or pull request it
+ * links. Prose like "the /login page" is not a folder.
+ */
+export function detectRepo(text: string): string | undefined {
+  const local = text.match(
+    /(?:^|[\s("'`])((?:~|\/(?:Users|home|Volumes|opt|srv|workspace|workspaces|projects|code|src))(?:\/[\w.@+-]+)+|[A-Za-z]:\\(?:[\w.@+-]+\\?)+)\/?(?=$|[\s,;:!?)"'`]|\.(?:\s|$))/,
+  );
+  if (local) return local[1].replace(/[\\/.]+$/, '');
+  const hosts = 'github\\.com|gitlab\\.com|bitbucket\\.org';
+  const repoUrl = text.match(
+    new RegExp(`https?://(?:www\\.)?(${hosts})/([\\w.-]+)/([\\w.-]+?)(?:\\.git)?/?(?=$|[\\s,;:!?)"'\`]|\\.(?:\\s|$))`, 'i'),
+  );
+  if (repoUrl) return `https://${repoUrl[1]}/${repoUrl[2]}/${repoUrl[3]}`;
+  const ssh = text.match(/\bgit@[\w.-]+:[\w.-]+\/[\w.-]+?\.git\b/);
+  if (ssh) return ssh[0];
+  const issue = text.match(
+    new RegExp(`https?://(?:www\\.)?(${hosts})/([\\w.-]+)/([\\w.-]+)/(?:issues|pull|-/issues|-/merge_requests)/\\d+`, 'i'),
+  );
+  if (issue) return `https://${issue[1]}/${issue[2]}/${issue[3]}`;
+  return undefined;
+}
+
+type RepoSource = 'remembered' | 'message' | 'picked';
+
+/**
+ * The Run dialog: a prompt and its attachments, the way you talk to Claude
+ * Code — no form. The prompt becomes the run's initial input (`${input}`);
+ * the server fetches the issues and pages it links and fills any declared
+ * `inputs` from it (an orchestration written for typed fields runs unchanged).
  *
- *  - Declared `inputs` (per `InputDecl`) render as typed fields ABOVE the
- *    instructions box — a ticket / doc / URL / freeform string, resolved
- *    server-side into `${name}` before phase 1. `text` / `url` / `jira` /
- *    `confluence` / `github` are text fields; `file` is an upload (base64).
- *    Required (*) declared inputs are validated before Run is enabled.
- *  - An OPTIONAL multiline "Additional instructions" textarea is ALWAYS
- *    rendered (even with zero declared inputs). Its text is returned as the
- *    run's INITIAL INPUT (`state.input` / `${input}` before phase 1).
+ *  - **Prompt** — Enter runs, Shift+Enter is a new line.
+ *  - **Files** — attach, drop on the dialog, or paste; the agents get them.
+ *  - **Repo** — where the run works, in its own worktree. Opens on the last
+ *    repo this pipeline used, follows a repo the prompt names, and Change
+ *    picks another. Without one the run works in an empty folder of its own.
+ *  - **How to run** — Pipeline or Harness.
  *
- * So: no declared inputs → just the optional instructions box + ▶ Run;
- * declared inputs → typed fields + the optional instructions box + ▶ Run.
- *
- * `defaultInstructions` pre-fills the instructions box (used by replay to
- * carry the prior run's initial input forward). Renders nothing only when no
- * orchestration is selected.
+ * `defaultInstructions` pre-fills the prompt (replay). Renders nothing only
+ * when no orchestration is selected.
  */
 export function RunInputsModal({
   orchestration,
@@ -145,21 +169,21 @@ export function RunInputsModal({
 }: {
   orchestration: Node | null;
   onClose: () => void;
-  /** `mode` carries the dialog's Pipeline / Harness choice and, for a
-   *  harness the user changed, the strictness — absent fields mean "as the
-   *  orchestration (or Settings) says". */
+  /** `values` is always empty from this dialog (declared inputs are filled
+   *  server-side from the prompt); `mode` carries the prompt flag, the repo,
+   *  the attachments and the Pipeline / Harness choice. */
   onRun: (values: RunInputValues, instructions: string, mode: RunModeOptions) => void;
   defaultInstructions?: string;
   /** Why the last ▶ Run from this dialog didn't start (the dialog stays open to say so). */
   error?: string | null;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [files, setFiles] = useState<Record<string, RunInputFile>>({});
-  const [instructions, setInstructions] = useState('');
-  // A repository URL typed into an input that feeds a `worktrees` entry:
-  // the clone offer shown when this machine has no clone of it.
-  // The repository input the folder picker is choosing for, while it's open.
-  const [browsing, setBrowsing] = useState<string | null>(null);
+  const [text, setText] = useState('');
+  const [files, setFiles] = useState<RunInputFile[]>([]);
+  const [repo, setRepo] = useState('');
+  const [repoSource, setRepoSource] = useState<RepoSource | null>(null);
+  const [editingRepo, setEditingRepo] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [cloneOffer, setCloneOffer] = useState<{
     url: string;
     cloneTo: string | null;
@@ -167,43 +191,31 @@ export function RunInputsModal({
     error?: string;
   } | null>(null);
   const [checking, setChecking] = useState(false);
-  // The "provide every required input" hint waits until the user has tried
-  // to run (or left a required field empty) — not shouted on open.
+  // The "what's missing" hint waits until the user has tried to run.
   const [attempted, setAttempted] = useState(false);
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
-  // Repo inputs open as a chip holding the last repo this pipeline used;
-  // Change swaps the chip for the field, Browse… and the recent repos.
-  const [editingRepo, setEditingRepo] = useState<Record<string, boolean>>({});
-  // Set once the values above are seeded for this orchestration, so the
-  // first-field focus waits for the seeded layout.
-  const [seededFor, setSeededFor] = useState<Node | null>(null);
   // Pipeline or harness, and the harness's strictness. `follow` stays null
   // until the user picks one, so an untouched dialog leaves the decision to
   // the orchestration / Settings (and the run records that as its source).
   const [execution, setExecution] = useState<ExecutionMode>('pipeline');
   const [follow, setFollow] = useState<HarnessFollow | null>(null);
   const [workspaceFollow, setWorkspaceFollow] = useState<HarnessFollow | null>(null);
-  // First text field — focused when the dialog opens so the user can type
-  // straight away (falls back to the instructions box).
-  const firstFieldRef = useRef<TextInputInstance | null>(null);
-  const instructionsRef = useRef<TextInputInstance | null>(null);
+  const promptRef = useRef<TextInputInstance | null>(null);
+  const panelRef = useRef<unknown>(null);
+
+  const remembered = (o: Node | null) => (o ? lastRepo(o.name, 'repo') : undefined);
+
   useEffect(() => {
-    const seeded: Record<string, string> = {};
-    if (orchestration) {
-      for (const name of repoInputNames(orchestration)) {
-        const last = lastRepo(orchestration.name, name);
-        if (last) seeded[name] = last;
-      }
-    }
-    setValues(seeded);
-    setEditingRepo({});
-    setSeededFor(orchestration);
-    setFiles({});
+    const seededText = defaultInstructions ?? '';
+    setText(seededText);
+    setFiles([]);
+    const named = detectRepo(seededText);
+    const last = remembered(orchestration);
+    setRepo(named ?? last ?? '');
+    setRepoSource(named ? 'message' : last ? 'remembered' : null);
+    setEditingRepo(false);
     setCloneOffer(null);
     setChecking(false);
     setAttempted(false);
-    setTouched({});
-    setInstructions(defaultInstructions ?? '');
     setExecution(orchestration?.execution ?? 'pipeline');
     setFollow(null);
     // Re-seed when a different orchestration / default is loaded into the modal.
@@ -221,106 +233,148 @@ export function RunInputsModal({
   }, [orchestration]);
 
   useEffect(() => {
-    if (!seededFor) return;
-    (firstFieldRef.current ?? instructionsRef.current)?.focus?.();
-  }, [seededFor]);
+    if (!orchestration) return;
+    promptRef.current?.focus?.();
+  }, [orchestration]);
 
   // Escape closes the dialog (web). Not while a clone is in flight — that
   // request would keep running behind a closed dialog — and not while the
   // folder picker is open: there Escape closes the picker.
   const cloneBusy = !!cloneOffer?.busy;
-  const pickerOpen = browsing !== null;
   useEffect(() => {
-    if (!orchestration || cloneBusy || pickerOpen) return;
+    if (!orchestration || cloneBusy || browsing) return;
     const g = globalThis as unknown as {
-      addEventListener?: (t: string, fn: (e: { key?: string }) => void) => void;
-      removeEventListener?: (t: string, fn: (e: { key?: string }) => void) => void;
+      addEventListener?: (t: string, fn: (e: { key?: string }) => void, capture?: boolean) => void;
+      removeEventListener?: (t: string, fn: (e: { key?: string }) => void, capture?: boolean) => void;
     };
     if (!g.addEventListener || !g.removeEventListener) return;
     const onKey = (e: { key?: string }) => {
       if (e.key === 'Escape') onClose();
     };
-    g.addEventListener('keydown', onKey);
-    return () => g.removeEventListener?.('keydown', onKey);
-  }, [orchestration, cloneBusy, pickerOpen, onClose]);
+    // Capture phase: react-native-web's TextInput stops every keydown from
+    // bubbling, and the prompt box has the focus.
+    g.addEventListener('keydown', onKey, true);
+    return () => g.removeEventListener?.('keydown', onKey, true);
+  }, [orchestration, cloneBusy, browsing, onClose]);
 
-  // The modal ALWAYS opens for a selected orchestration — even with zero
-  // declared inputs, the optional instructions box still renders.
+  // Files dropped anywhere on the dialog, or pasted into the prompt (web).
+  const addFiles = async (list: FileList | File[] | null | undefined) => {
+    const picked = [...(list ?? [])];
+    if (picked.length === 0) return;
+    const read = (await Promise.all(picked.map(readFileToRunInput))).filter(
+      (f): f is RunInputFile => f !== null,
+    );
+    if (read.length > 0) setFiles(fs => [...fs, ...read]);
+  };
+  useEffect(() => {
+    const panel = panelRef.current as HTMLElement | null;
+    const prompt = promptRef.current as unknown as HTMLElement | null;
+    if (!panel?.addEventListener || typeof window === 'undefined') return;
+    const over = (e: DragEvent) => {
+      if (!e.dataTransfer?.types?.includes?.('Files')) return;
+      e.preventDefault();
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (e.relatedTarget && panel.contains(e.relatedTarget as globalThis.Node)) return;
+      setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      setDragging(false);
+      void addFiles(e.dataTransfer.files);
+    };
+    const paste = (e: ClipboardEvent) => {
+      if (!e.clipboardData?.files?.length) return;
+      e.preventDefault();
+      void addFiles(e.clipboardData.files);
+    };
+    panel.addEventListener('dragover', over);
+    panel.addEventListener('dragenter', over);
+    panel.addEventListener('dragleave', leave);
+    panel.addEventListener('drop', drop);
+    prompt?.addEventListener?.('paste', paste);
+    return () => {
+      panel.removeEventListener('dragover', over);
+      panel.removeEventListener('dragenter', over);
+      panel.removeEventListener('dragleave', leave);
+      panel.removeEventListener('drop', drop);
+      prompt?.removeEventListener?.('paste', paste);
+    };
+  }, [orchestration]);
+
   if (!orchestration) return null;
   const decls = orchestration.inputs ?? [];
-
-  const provided = (d: { name: string; kind: string }): boolean =>
-    d.kind === 'file' ? !!files[d.name] : !!(values[d.name] ?? '').trim();
-  const missingRequired = decls.some(d => d.required && !provided(d));
-  const showMissing =
-    missingRequired &&
-    (attempted || decls.some(d => d.required && touched[d.name] && !provided(d)));
-  // Repo inputs need a LOCAL path; a pasted web address is swapped for this
-  // machine's clone of it, or the dialog offers to make one.
   const repoInputs = repoInputNames(orchestration);
-  // A repo input showing its chip has no field to type in.
-  const showsChip = (name: string) =>
-    repoInputs.has(name) && !editingRepo[name] && !!(values[name] ?? '').trim();
-  const firstTextName = decls.find(d => d.kind !== 'file' && !showsChip(d.name))?.name;
-  const isRepoUrl = (v: string) =>
-    /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^[\w.-]+@[\w.-]+:/.test(v);
+  // An orchestration whose worktrees name their own repos has nothing to pick.
+  const fixedWorktrees = (orchestration.worktrees ?? []).length > 0 && repoInputs.size === 0;
+  const needsRepo = repoInputs.size > 0;
+  const needsText = decls.some(d => d.required && d.kind !== 'file' && !repoInputs.has(d.name));
+  const needsFile = decls.some(d => d.required && d.kind === 'file');
+  const missing = [
+    ...(needsText && !text.trim() ? ['say what to work on'] : []),
+    ...(needsRepo && !repo.trim() ? ['choose the repo it works in'] : []),
+    ...(needsFile && files.length === 0 ? ['attach a file'] : []),
+  ];
 
-  const collect = (overrides: Record<string, string>): RunInputValues => {
-    const out: RunInputValues = {};
-    for (const d of decls) {
-      if (d.kind === 'file') {
-        if (files[d.name]) out[d.name] = { file: files[d.name] };
-      } else {
-        const v = (overrides[d.name] ?? values[d.name] ?? '').trim();
-        if (v) out[d.name] = { value: v };
-      }
+  const onText = (t: string) => {
+    setText(t);
+    if (repoSource === 'picked') return;
+    const named = detectRepo(t);
+    if (named) {
+      setRepo(named);
+      setRepoSource('message');
+    } else if (repoSource === 'message') {
+      const last = remembered(orchestration);
+      setRepo(last ?? '');
+      setRepoSource(last ? 'remembered' : null);
     }
-    return out;
+  };
+  const pickRepo = (r: string) => {
+    setRepo(r);
+    setRepoSource(r.trim() ? 'picked' : null);
+    setEditingRepo(false);
   };
 
   const submit = async () => {
-    const overrides: Record<string, string> = {};
-    const urls = [...repoInputs]
-      .map(name => ({ name, value: (values[name] ?? '').trim() }))
-      .filter(r => isRepoUrl(r.value));
-    if (urls.length > 0) {
+    let target = repo.trim();
+    if (target && isRepoUrl(target)) {
       setChecking(true);
       try {
-        for (const r of urls) {
-          const loc = await locateRepo(r.value);
-          if (!loc.local) {
-            setCloneOffer({ url: r.value, cloneTo: loc.cloneTo, busy: false });
-            return;
-          }
-          overrides[r.name] = loc.local;
+        const loc = await locateRepo(target);
+        if (!loc.local) {
+          setCloneOffer({ url: target, cloneTo: loc.cloneTo, busy: false });
+          return;
         }
+        target = loc.local;
       } catch (err) {
-        setCloneOffer({ url: urls[0].value, cloneTo: null, busy: false, error: (err as Error).message });
+        setCloneOffer({ url: target, cloneTo: null, busy: false, error: (err as Error).message });
         return;
       } finally {
         setChecking(false);
       }
     }
-    setValues(v => ({ ...v, ...overrides }));
-    for (const name of repoInputs) {
-      rememberRepo(orchestration.name, name, overrides[name] ?? values[name] ?? '');
-    }
-    // The instructions box maps to the run's initial input. Trim to keep an
-    // empty box equivalent to "no initial input" (same as a plain ▶ Run).
-    onRun(collect(overrides), instructions.trim(), {
+    if (target) rememberRepo(orchestration.name, 'repo', target);
+    onRun({}, text.trim(), {
+      prompt: true,
+      ...(target ? { repo: target } : {}),
+      ...(files.length > 0
+        ? { attachments: files.map(f => ({ filename: f.filename, mediaType: f.mediaType, data: f.data })) }
+        : {}),
       ...(execution !== (orchestration.execution ?? 'pipeline') ? { execution } : {}),
       ...(execution === 'harness' && follow ? { follow } : {}),
     });
   };
 
-  // Run if the form is valid; otherwise surface the missing-input hint.
+  // Run if nothing required is missing; otherwise say what is.
   const trySubmit = () => {
     if (checking || cloneOffer) return;
-    if (missingRequired) {
+    if (missing.length > 0) {
       setAttempted(true);
       return;
     }
-    submit();
+    void submit();
   };
 
   const acceptClone = async () => {
@@ -335,10 +389,14 @@ export function RunInputsModal({
     }
   };
 
+  const recent = recentRepos().filter(r => r !== repo.trim());
+  const repoHint =
+    repoSource === 'message' ? 'from your message' : repoSource === 'remembered' ? 'last used' : null;
+
   return (
     <View style={styles.modalOverlay}>
-      <Pressable style={styles.modalBackdrop} onPress={pickerOpen ? undefined : onClose} />
-      <View style={styles.modalPanel}>
+      <Pressable style={styles.modalBackdrop} onPress={browsing ? undefined : onClose} />
+      <View ref={panelRef as never} style={[styles.modalPanel, dragging && styles.modalPanelDragging]}>
         <View style={styles.modalHeader}>
           <Text style={styles.modalTitle}>
             ▶ Run "{orchestration.name}"
@@ -348,32 +406,80 @@ export function RunInputsModal({
           </Pressable>
         </View>
         <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
-          {decls.map(d => (
-            <View key={d.name} style={styles.field}>
+          <View style={styles.field}>
+            <TextInput
+              ref={promptRef}
+              value={text}
+              onChangeText={onText}
+              onKeyPress={e => {
+                const ne = e.nativeEvent as { key?: string; shiftKey?: boolean; isComposing?: boolean };
+                if (ne.key === 'Enter' && !ne.shiftKey && !ne.isComposing) {
+                  e.preventDefault();
+                  trySubmit();
+                }
+              }}
+              placeholder={
+                decls.length > 0 && decls[0].description
+                  ? `What should it work on? ${runInputPlaceholder(decls.find(d => !repoInputs.has(d.name)) ?? decls[0])}…`
+                  : 'What should it work on? Paste a ticket or link, or describe it.'
+              }
+              accessibilityLabel="Prompt"
+              style={[styles.input, styles.promptInput]}
+              multiline
+              numberOfLines={5}
+              textAlignVertical="top"
+              autoCapitalize="sentences"
+            />
+            <Text style={styles.promptHint}>
+              Enter runs · Shift+Enter for a new line · links to issues and pages are fetched for the agents
+            </Text>
+          </View>
+
+          <View style={styles.attachRow}>
+            {files.map((f, i) => (
+              <View key={`${f.filename}-${i}`} style={styles.fileChip}>
+                <Text style={styles.fileChipText} numberOfLines={1}>
+                  📎 {f.filename}
+                </Text>
+                <Pressable
+                  onPress={() => setFiles(fs => fs.filter((_, j) => j !== i))}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${f.filename}`}>
+                  <Text style={styles.fileChipRemove}>×</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Pressable
+              onPress={async () => {
+                const f = await pickRunFile();
+                if (f) setFiles(fs => [...fs, f]);
+              }}
+              style={[styles.button, styles.secondaryButton, styles.smallButton]}
+              accessibilityRole="button"
+              accessibilityLabel="Attach a file">
+              <Text style={styles.secondaryButtonText}>{dragging ? '📥 Drop to attach' : '📎 Attach'}</Text>
+            </Pressable>
+          </View>
+
+          {fixedWorktrees ? null : (
+            <View style={styles.field}>
               <Text style={styles.label}>
-                {d.name}
-                {d.required ? ' *' : ''} · {d.kind}
-                {d.description ? ` — ${d.description}` : ''}
+                Repo{needsRepo ? ' *' : ''}
+                {repoHint ? <Text style={styles.labelHint}>{`  ·  ${repoHint}`}</Text> : null}
               </Text>
-              {d.kind === 'file' ? (
-                <FileDropField
-                  name={d.name}
-                  file={files[d.name]}
-                  onFile={f => setFiles(s => ({ ...s, [d.name]: f }))}
-                />
-              ) : showsChip(d.name) ? (
+              {repo.trim() && !editingRepo ? (
                 <View style={styles.inputRow}>
-                  <View style={styles.repoChip} accessibilityLabel={`${d.name}: ${values[d.name]}`}>
-                    <Text style={styles.repoChipName}>{folderName(values[d.name])}</Text>
+                  <View style={styles.repoChip} accessibilityLabel={`repo: ${repo}`}>
+                    <Text style={styles.repoChipName}>{folderName(repo)}</Text>
                     <Text style={styles.repoChipPath} numberOfLines={1}>
-                      {values[d.name]}
+                      {repo}
                     </Text>
                   </View>
                   <Pressable
-                    onPress={() => setEditingRepo(s => ({ ...s, [d.name]: true }))}
+                    onPress={() => setEditingRepo(true)}
                     style={[styles.button, styles.secondaryButton]}
                     accessibilityRole="button"
-                    accessibilityLabel={`Change the ${d.name}`}>
+                    accessibilityLabel="Change the repo">
                     <Text style={styles.secondaryButtonText}>Change</Text>
                   </Pressable>
                 </View>
@@ -381,58 +487,57 @@ export function RunInputsModal({
                 <>
                   <View style={styles.inputRow}>
                     <TextInput
-                      ref={d.name === firstTextName ? firstFieldRef : undefined}
-                      value={values[d.name] ?? ''}
-                      onChangeText={t => setValues(s => ({ ...s, [d.name]: t }))}
-                      onBlur={() => setTouched(s => ({ ...s, [d.name]: true }))}
-                      // Enter in a single-line field runs (when the form is valid).
-                      onSubmitEditing={trySubmit}
-                      returnKeyType="go"
-                      placeholder={runInputPlaceholder(d)}
+                      value={repo}
+                      onChangeText={r => {
+                        // Stay in the field while typing; Enter or a pick shows the chip.
+                        setEditingRepo(true);
+                        setRepo(r);
+                        setRepoSource(r.trim() ? 'picked' : null);
+                      }}
+                      onSubmitEditing={() => repo.trim() && setEditingRepo(false)}
+                      placeholder={
+                        needsRepo
+                          ? 'A local folder or the repository’s URL'
+                          : 'Optional — without one the run works in an empty folder'
+                      }
+                      accessibilityLabel="Repo path or URL"
                       style={[styles.input, styles.inputGrow]}
                       autoCapitalize="none"
                     />
-                    {repoInputs.has(d.name) ? (
-                      <Pressable
-                        onPress={() => setBrowsing(d.name)}
-                        style={[styles.button, styles.secondaryButton]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Browse for the ${d.name} folder`}>
-                        <Text style={styles.secondaryButtonText}>Browse…</Text>
-                      </Pressable>
-                    ) : null}
+                    <Pressable
+                      onPress={() => setBrowsing(true)}
+                      style={[styles.button, styles.secondaryButton]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Browse for the repo folder">
+                      <Text style={styles.secondaryButtonText}>Browse…</Text>
+                    </Pressable>
                   </View>
-                  {repoInputs.has(d.name)
-                    ? (() => {
-                        const recent = recentRepos().filter(r => r !== (values[d.name] ?? '').trim());
-                        return recent.length > 0 ? (
-                          <View style={styles.recentRepos}>
-                            <Text style={styles.recentLabel}>Recent</Text>
-                            {recent.map(r => (
-                              <Pressable
-                                key={r}
-                                onPress={() => {
-                                  setValues(s => ({ ...s, [d.name]: r }));
-                                  setTouched(s => ({ ...s, [d.name]: true }));
-                                  setEditingRepo(s => ({ ...s, [d.name]: false }));
-                                }}
-                                style={styles.recentRepo}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Use ${r}`}>
-                                <Text style={styles.repoChipName}>{folderName(r)}</Text>
-                                <Text style={styles.repoChipPath} numberOfLines={1}>
-                                  {r}
-                                </Text>
-                              </Pressable>
-                            ))}
-                          </View>
-                        ) : null;
-                      })()
-                    : null}
+                  {recent.length > 0 ? (
+                    <View style={styles.recentRepos}>
+                      <Text style={styles.recentLabel}>Recent</Text>
+                      {recent.map(r => (
+                        <Pressable
+                          key={r}
+                          onPress={() => pickRepo(r)}
+                          style={styles.recentRepo}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Use ${r}`}>
+                          <Text style={styles.repoChipName}>{folderName(r)}</Text>
+                          <Text style={styles.repoChipPath} numberOfLines={1}>
+                            {r}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
                 </>
               )}
+              {repo.trim() ? (
+                <Text style={styles.promptHint}>The run works in its own worktree on a new branch — never in your checkout.</Text>
+              ) : null}
             </View>
-          ))}
+          )}
+
           <RunModePicker
             orchestration={orchestration}
             execution={execution}
@@ -441,25 +546,9 @@ export function RunInputsModal({
             onFollow={setFollow}
             workspaceFollow={workspaceFollow}
           />
-          {/* ALWAYS rendered — the optional initial-input box. Maps to the
-              run's `state.input` (`${input}`). Never required, even when
-              declared inputs above are. */}
-          <View style={styles.field}>
-            <Text style={styles.label}>Additional instructions (optional)</Text>
-            <TextInput
-              ref={instructionsRef}
-              value={instructions}
-              onChangeText={setInstructions}
-              placeholder={'e.g. look at ticket-123 and do xyz'}
-              style={[styles.input, styles.instructionsInput]}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
-            />
-          </View>
         </ScrollView>
-        {showMissing ? (
-          <Text style={styles.errorText}>Provide every required (*) input to run.</Text>
+        {attempted && missing.length > 0 ? (
+          <Text style={styles.errorText}>{`To run, ${missing.join(' and ')}.`}</Text>
         ) : null}
         {(() => {
           const tools = declaredAgentTools(orchestration);
@@ -506,15 +595,15 @@ export function RunInputsModal({
         ) : (
           <View style={styles.modalButtonRow}>
             <Pressable
-              // Stays pressable while inputs are missing so a press can
-              // reveal WHY it won't run; it just looks (and acts) inert.
+              // Stays pressable while something is missing so a press can
+              // reveal WHAT; it just looks (and acts) inert.
               onPress={trySubmit}
               disabled={checking}
-              accessibilityState={{ disabled: missingRequired || checking }}
+              accessibilityState={{ disabled: missing.length > 0 || checking }}
               style={[
                 styles.button,
                 styles.primaryButton,
-                (missingRequired || checking) && styles.buttonDisabled,
+                (missing.length > 0 || checking) && styles.buttonDisabled,
               ]}
               accessibilityRole="button"
               accessibilityLabel="Run with inputs">
@@ -523,15 +612,13 @@ export function RunInputsModal({
           </View>
         )}
       </View>
-      {browsing !== null ? (
+      {browsing ? (
         <FolderPicker
-          start={values[browsing]}
-          onClose={() => setBrowsing(null)}
+          start={repo || undefined}
+          onClose={() => setBrowsing(false)}
           onPick={dir => {
-            setValues(s => ({ ...s, [browsing]: dir }));
-            setTouched(s => ({ ...s, [browsing]: true }));
-            setEditingRepo(s => ({ ...s, [browsing]: false }));
-            setBrowsing(null);
+            pickRepo(dir);
+            setBrowsing(false);
           }}
         />
       ) : null}
@@ -624,71 +711,6 @@ function RunModePicker({
 /** File input that supports BOTH click-to-pick and drag-and-drop. On web,
  *  react-native-web forwards the ref to the underlying DOM node, so we attach
  *  native drag listeners to it — RN's Pressable has no onDrop of its own. */
-function FileDropField({
-  name,
-  file,
-  onFile,
-}: {
-  name: string;
-  file?: RunInputFile;
-  onFile: (f: RunInputFile) => void;
-}) {
-  const ref = useRef<unknown>(null);
-  const [dragging, setDragging] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current as HTMLElement | null;
-    if (!el || typeof window === 'undefined') return;
-    const over = (e: DragEvent) => {
-      e.preventDefault();
-      setDragging(true);
-    };
-    const leave = (e: DragEvent) => {
-      e.preventDefault();
-      setDragging(false);
-    };
-    const drop = async (e: DragEvent) => {
-      e.preventDefault();
-      setDragging(false);
-      const f = e.dataTransfer?.files?.[0];
-      if (f) {
-        const r = await readFileToRunInput(f);
-        if (r) onFile(r);
-      }
-    };
-    el.addEventListener('dragover', over);
-    el.addEventListener('dragenter', over);
-    el.addEventListener('dragleave', leave);
-    el.addEventListener('drop', drop);
-    return () => {
-      el.removeEventListener('dragover', over);
-      el.removeEventListener('dragenter', over);
-      el.removeEventListener('dragleave', leave);
-      el.removeEventListener('drop', drop);
-    };
-  }, [onFile]);
-
-  return (
-    <Pressable
-      ref={ref as never}
-      style={[styles.dropZone, dragging && styles.dropZoneActive]}
-      onPress={async () => {
-        const f = await pickRunFile();
-        if (f) onFile(f);
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={`Choose or drop a document for ${name}`}>
-      <Text style={file ? styles.fileChosen : styles.filePrompt}>
-        {file
-          ? `📎 ${file.filename}  ·  click or drop to replace`
-          : dragging
-            ? '📥 Drop to attach…'
-            : '📎 Choose a document…  or drag & drop here'}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   modalOverlay: {
     position: 'absolute',
@@ -741,6 +763,26 @@ const styles = StyleSheet.create({
   instructionsInput: { minHeight: 80, paddingTop: 8 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   inputGrow: { flex: 1 },
+  promptInput: { minHeight: 110 },
+  promptHint: { fontSize: 11, color: '#6b7280', marginTop: 4 },
+  labelHint: { fontWeight: '400', color: '#6b7280' },
+  attachRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 12 },
+  fileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: 260,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#f9fafb',
+  },
+  fileChipText: { fontSize: 12, color: '#374151', flexShrink: 1 },
+  fileChipRemove: { fontSize: 14, color: '#6b7280' },
+  smallButton: { paddingVertical: 4, paddingHorizontal: 10 },
+  modalPanelDragging: { borderWidth: 2, borderColor: '#2563eb', borderStyle: 'dashed' },
   repoChip: {
     flex: 1,
     borderWidth: 1,

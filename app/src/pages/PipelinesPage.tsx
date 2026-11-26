@@ -45,7 +45,7 @@ import {
   getBudgetStatus,
   type BudgetStatus,
 } from '../store/budget';
-import { useLiveRunStatus, useRuns } from '../store/runs';
+import { needsServerRun, useLiveRunStatus, useRuns } from '../store/runs';
 import {
   buildSelectedInstruction,
   onOpenImprove,
@@ -2032,16 +2032,11 @@ async function handleDuplicate() {
         onRun={(values, instructions, mode) => {
           const orch = pendingRun;
           if (!orch) return;
-          // The instructions box → the run's initial input.
+          // The prompt → the run's initial input.
           const initialInput = instructions || undefined;
-          // Declared inputs resolve server-side, so they force the
-          // server-owned path. With no declared inputs we honor the auth
-          // mode just like a plain ▶ Run did (proxy → server, else browser).
-          const hasDeclaredInputs = Object.keys(values).length > 0;
-          // A harness only runs server-side (its agent hosts the step tools).
-          const harness = (mode.execution ?? orch.execution) === 'harness';
-          const useServer =
-            hasDeclaredInputs || harness || getAuthMode() === 'claude-code-proxy';
+          // A repo, attachments, declared inputs or a harness need the
+          // server; otherwise honor the auth mode as a plain ▶ Run did.
+          const useServer = needsServerRun(orch, mode) || getAuthMode() === 'claude-code-proxy';
           const ok = useServer
             ? runs.startServerRun(orch, initialInput, values, mode)
             : runs.startRun(orch, initialInput);

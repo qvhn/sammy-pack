@@ -138,8 +138,11 @@ clean-looking linear flow that doesn't match what the user drew.
 When the spec implies the run operates on something the user hands it at
 start time (a ticket, a page, an uploaded doc, a URL, or a freeform
 string), declare it as a top-level `inputs: InputDecl[]`. Each declared
-input becomes a typed field in the pre-run modal and is resolved to text
-and made available to every phase as `${name}`.
+input is resolved to text and made available to every phase as `${name}`.
+The Run dialog is a single prompt box: the person's prompt fills the first
+required input (resolved by its kind — a Jira key is fetched), attached
+files fill `file` inputs, and the repo they pick fills an input a
+`worktrees` entry reads. Triggers and the API set inputs by name.
 
 ```json
 "inputs": [
@@ -173,10 +176,13 @@ Guidance:
 - Keep names generic and reusable; don't bake in a particular ticket id,
   URL, or file path.
 
-A run ALSO always accepts an optional freeform "additional instructions"
-string (the run's initial input, readable as `${input}`) — you do NOT need
-to declare that; it's always available. Use `inputs` only for the typed,
-named values above.
+The prompt itself is always the run's initial input, readable as
+`${input}` — you do NOT need to declare it. A pipeline whose work is just
+"what the person asked" can read `${input}` and declare no inputs at all.
+
+Don't declare a repo input or `worktrees` just to work in the person's
+repository: a run started with a repo gets its own worktree of it, named
+`repo` — phases read `${worktrees.repo.path}` / `${worktrees.repo.branch}`.
 
 # Available agents in this workspace
 

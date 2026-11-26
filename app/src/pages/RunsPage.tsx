@@ -17,7 +17,8 @@ import type { CompositeKind, RunEvent } from '../llm/executor';
 import { isProgramPhase, phaseAgentPath } from './phaseKind';
 import { inputTokensOf } from '../lib/spend';
 import { formatDuration } from '../lib/run-result';
-import { totalUsage, useRuns, type Run } from '../store/runs';
+import { needsServerRun, totalUsage, useRuns, type Run } from '../store/runs';
+import { promptWords } from '../lib/run-prompt';
 import { takeRequestedRun } from '../store/runSelection';
 import { useToast } from '../store/toast';
 import { type Node } from '../types';
@@ -449,7 +450,7 @@ export function RunsPage() {
                         // box; declared-input values re-collect there (they
                         // resolve server-side). Launch happens in onRun below.
                         setReplayPending(snapshot);
-                        setReplayDefaultInstructions(detailRun.initialInput ?? '');
+                        setReplayDefaultInstructions(promptWords(detailRun.initialInput ?? ''));
                       }
                     : undefined
                 }
@@ -493,16 +494,11 @@ export function RunsPage() {
             const orch = replayPending;
             setReplayPending(null);
             if (!orch) return;
-            // The instructions box → the run's initial input.
+            // The prompt → the run's initial input.
             const initialInput = instructions || undefined;
-            // Declared inputs resolve server-side, so they force the
-            // server-owned path. With no declared inputs we honor the auth
-            // mode just like a plain replay did (proxy → server, else browser).
-            const hasDeclaredInputs = Object.keys(values).length > 0;
-            // A harness only runs server-side (its agent hosts the step tools).
-            const harness = (mode.execution ?? orch.execution) === 'harness';
-            const useServer =
-              hasDeclaredInputs || harness || getAuthMode() === 'claude-code-proxy';
+            // A repo, attachments, declared inputs or a harness need the
+            // server; otherwise honor the auth mode as a plain replay did.
+            const useServer = needsServerRun(orch, mode) || getAuthMode() === 'claude-code-proxy';
             const ok = useServer
               ? startServerRun(orch, initialInput, values, mode)
               : startRun(orch, initialInput);

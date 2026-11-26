@@ -1022,6 +1022,10 @@ type ExecutorContext = {
    *  the workspace root, where its project skills live (the server's
    *  `harnessCwd`). */
   skillCwd?: string;
+  /** Where any other agent works when the run has no single worktree: the
+   *  run's own empty folder, so it never works in (or picks up the project
+   *  settings and hooks of) whatever folder the server was started from. */
+  scratchCwd?: string;
 
   /** Root-level `state` declarations: which keys have reducer
    *  semantics + their seed values. When `as:` writes to a key here,
@@ -2204,7 +2208,9 @@ async function* runAgentPhase(
           ? { cwd: ctx.defaultCwd }
           : skill && ctx.skillCwd
             ? { cwd: ctx.skillCwd }
-            : {}),
+            : ctx.scratchCwd
+              ? { cwd: ctx.scratchCwd }
+              : {}),
       })) {
         if (ctx.cancelled.v) throw new RunCancelled();
         // Mid-stream pause: any user-initiated pause flag flips during
@@ -7175,6 +7181,7 @@ export async function* runOrchestration({
   harnessFollow,
   skillExists,
   harnessCwd,
+  scratchCwd,
   harnessControl,
 }: {
   orchestration: Node;
@@ -7307,6 +7314,9 @@ export async function* runOrchestration({
   /** Working directory for a harness agent when the run has no single
    *  worktree (the server passes the workspace root). */
   harnessCwd?: string;
+  /** The run's empty folder for agent steps when it has no single worktree
+   *  (ExecCtx.scratchCwd). */
+  scratchCwd?: string;
   /** The host's handle for driving a harness run from a terminal. */
   harnessControl?: HarnessControl;
 }): AsyncIterable<RunEvent> {
@@ -7482,6 +7492,7 @@ export async function* runOrchestration({
     ),
     defaultCwd: worktrees && worktrees.length === 1 ? worktrees[0].path : undefined,
     ...(harnessCwd ? { skillCwd: harnessCwd } : {}),
+    ...(scratchCwd && !(worktrees && worktrees.length === 1) ? { scratchCwd } : {}),
     artifactBytes: { v: 0 },
     artifactsByName: new Map(),
     loadArtifact,

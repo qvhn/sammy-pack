@@ -39,7 +39,28 @@ import { deriveRunResult, gatedPhaseOf, linkKindLabel } from '../lib/run-result'
 
 /** How the Run dialog asked this run to execute (absent: as the
  *  orchestration says). */
-export type RunModeOptions = { execution?: ExecutionMode; follow?: HarnessFollow };
+export type RunModeOptions = {
+  execution?: ExecutionMode;
+  follow?: HarnessFollow;
+  /** The initial input is a prompt in the person's own words (the Run
+   *  dialog): the server fetches its links and fills declared inputs from it. */
+  prompt?: boolean;
+  /** The repository the run works in, in its own worktree. */
+  repo?: string;
+  /** Files attached to the prompt (base64 `data`). */
+  attachments?: Array<{ filename: string; mediaType: string; data: string }>;
+};
+
+/** A start from the Run dialog that only the server can do: it names a repo,
+ *  attaches files, or fills declared inputs. */
+export function needsServerRun(orchestration: Node, mode: RunModeOptions): boolean {
+  return (
+    !!mode.repo ||
+    (mode.attachments?.length ?? 0) > 0 ||
+    (orchestration.inputs?.length ?? 0) > 0 ||
+    (mode.execution ?? orchestration.execution) === 'harness'
+  );
+}
 
 export type RunStatus =
   | 'running'
@@ -1068,6 +1089,9 @@ export function RunsProvider({ children }: { children: ReactNode }) {
               inputs,
               ...(runOptions?.execution ? { execution: runOptions.execution } : {}),
               ...(runOptions?.follow ? { follow: runOptions.follow } : {}),
+              ...(runOptions?.prompt ? { prompt: true } : {}),
+              ...(runOptions?.repo ? { repo: runOptions.repo } : {}),
+              ...(runOptions?.attachments?.length ? { attachments: runOptions.attachments } : {}),
             }),
           });
           if (!res.ok) {
